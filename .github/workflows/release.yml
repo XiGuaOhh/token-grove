@@ -1,0 +1,64 @@
+name: Publish Windows release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release version (must match the app and release notes)
+        required: true
+        default: v2.5.0
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-windows-release
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Validate release version
+        shell: pwsh
+        run: |
+          if ($env:RELEASE_TAG -notmatch '^v[0-9]+\.[0-9]+\.[0-9]+$') { throw 'Use a version such as v2.5.0' }
+          if (-not (Test-Path -LiteralPath "docs/releases/$env:RELEASE_TAG.md")) { throw 'Release notes are missing' }
+      - name: Build native desktop app
+        shell: pwsh
+        run: ./build.ps1
+      - name: Run native regression checks
+        shell: pwsh
+        run: |
+          $env:TOKEN_GROVE_TEST_ROOT = $env:RUNNER_TEMP
+          $test = Start-Process './Token Grove.exe' -ArgumentList '--self-test' -Wait -PassThru -NoNewWindow -RedirectStandardOutput 'self-test.log' -RedirectStandardError 'self-test.err'
+          Get-Content 'self-test.log'
+          Get-Content 'self-test.err'
+          if ($test.ExitCode -ne 0) { throw 'Native checks failed' }
+      - name: Package portable app
+        shell: pwsh
+        run: |
+          $version = (Get-Item -LiteralPath './Token Grove.exe').VersionInfo.FileVersion -replace '\.0$',''
+          if ('v'+$version -ne $env:RELEASE_TAG) { throw 'The release tag does not match the app version' }
+          ./scripts/package.ps1
+      - name: Publish version and downloads
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view $env:RELEASE_TAG --repo $env:GITHUB_REPOSITORY 2>$null
+          if ($LASTEXITCODE -eq 0) { throw 'This release already exists; refusing to overwrite it' }
+          $archive = "dist/Token-Grove-$env:RELEASE_TAG-Windows-x64.zip"
+          $notes = "docs/releases/$env:RELEASE_TAG.md"
+          gh release create $env:RELEASE_TAG $archive 'dist/SHA256SUMS.txt' --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "Token Grove $env:RELEASE_TAG" --notes-file $notes --latest
+          if ($LASTEXITCODE -ne 0) { throw 'GitHub release publication failed' }
