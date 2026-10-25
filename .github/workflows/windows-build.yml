@@ -1,0 +1,38 @@
+name: Windows build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Build native desktop app
+        shell: pwsh
+        run: ./build.ps1
+      - name: Run native regression checks
+        shell: pwsh
+        run: |
+          $env:TOKEN_GROVE_TEST_ROOT = $env:RUNNER_TEMP
+          $test = Start-Process './Token Grove.exe' -ArgumentList '--self-test' -Wait -PassThru -NoNewWindow -RedirectStandardOutput 'self-test.log' -RedirectStandardError 'self-test.err'
+          Get-Content 'self-test.log'
+          Get-Content 'self-test.err'
+          if ($test.ExitCode -ne 0) { throw 'Native checks failed' }
+      - name: Package portable app
+        shell: pwsh
+        run: ./scripts/package.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: token-grove-windows-x64
+          path: dist/*
+          if-no-files-found: error
+
