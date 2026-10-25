@@ -10,10 +10,11 @@ namespace TokenGrove {
   }
   public sealed class GroveButton:Button {
     public bool Primary,Selected,Nav,Quiet;public string Glyph;public Func<Palette> Colors;bool hover;
-    readonly Timer timer=new Timer{Interval=FramePacing.FrameMilliseconds};float blend;bool frameLease;
-    public GroveButton(string text,Action action){Text=text;AccessibleName=string.IsNullOrWhiteSpace(text)?"按钮":text;FlatStyle=FlatStyle.Flat;FlatAppearance.BorderSize=0;Cursor=Cursors.Hand;TabStop=true;SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);Click+=(s,e)=>action();MouseEnter+=(s,e)=>{hover=true;Start();};MouseLeave+=(s,e)=>{hover=false;Start();};VisibleChanged+=(s,e)=>{if(!Visible)Stop();};timer.Tick+=(s,e)=>{float target=hover?1:0;blend+=(target-blend)*.27f;if(Math.Abs(target-blend)<.015f||!Visible||!Art.AnimationsEnabled){blend=target;Stop();}Invalidate();};}
-    void Stop(){timer.Stop();if(frameLease){frameLease=false;FramePacing.Release();}}
-    void Start(){if(Art.AnimationsEnabled&&Visible){if(!frameLease){frameLease=true;FramePacing.Acquire();}timer.Start();}else{Stop();blend=hover?1:0;Invalidate();}}
+    readonly Timer timer=new Timer{Interval=FramePacing.FrameMilliseconds};readonly System.Diagnostics.Stopwatch transition=new System.Diagnostics.Stopwatch();float blend,fromBlend;bool frameLease;
+    public GroveButton(string text,Action action){Text=text;AccessibleName=string.IsNullOrWhiteSpace(text)?"按钮":text;FlatStyle=FlatStyle.Flat;FlatAppearance.BorderSize=0;Cursor=Cursors.Hand;TabStop=true;SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);Click+=(s,e)=>action();MouseEnter+=(s,e)=>SetHover(true);MouseLeave+=(s,e)=>SetHover(false);VisibleChanged+=(s,e)=>{if(!Visible){hover=false;blend=0;Stop();}};timer.Tick+=(s,e)=>{float target=hover?1:0;double t=Math.Min(1,transition.Elapsed.TotalMilliseconds/110d);blend=fromBlend+(target-fromBlend)*(float)(1-Math.Pow(1-t,3));if(t>=1||!Visible||!Art.AnimationsEnabled){blend=target;Stop();}Invalidate();};}
+    void Stop(){timer.Stop();transition.Stop();if(frameLease){frameLease=false;FramePacing.Release();}}
+    void SetHover(bool value){hover=value;if(Nav&&!value){Stop();blend=0;}else{if(Nav)blend=Math.Max(.25f,blend);Start();}Invalidate();if(Nav&&IsHandleCreated&&Visible)Update();}
+    void Start(){if(Art.AnimationsEnabled&&Visible){fromBlend=blend;transition.Restart();if(!frameLease){frameLease=true;FramePacing.Acquire();}timer.Start();}else{Stop();blend=hover?1:0;}}
     protected override void OnPaintBackground(PaintEventArgs e){}
     protected override void OnPaint(PaintEventArgs e){var p=Colors?.Invoke()??new Palette(false);float dpi=e.Graphics.DpiX/96f;GlassSurface.Paint(this,e.Graphics,e.ClipRectangle,Nav?p.Side:Parent?.BackColor??p.Bg);e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;var bg=Primary?Art.Mix(p.Green,p.Text,blend*.1f):Selected?p.Soft:Nav?Art.Mix(p.Side,p.Soft,blend):Art.Mix(p.Panel,p.Hover,blend);Color ink=Primary?(p.Green.GetBrightness()>.58f?Palette.C("#22304D"):Color.White):Selected?p.Green:Nav?p.Muted:p.Text;
       if(!Quiet||blend>.01f||Selected)Art.Box(e.Graphics,new RectangleF(.5f,.5f,Width-1,Height-1),bg,Nav||Primary||Quiet?(Color?)null:p.Line,9*dpi);
@@ -69,9 +70,13 @@ namespace TokenGrove {
     protected override void OnPaint(PaintEventArgs e){var p=Colors?.Invoke()??new Palette(false);edit.BackColor=p.Hover;edit.ForeColor=p.Text;e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;float dpi=e.Graphics.DpiX/96f;Art.Box(e.Graphics,new RectangleF(.5f,.5f,Width-1,Height-1),p.Hover,p.Line,8*dpi);Art.Icon(e.Graphics,"search",10*dpi,(Height-15*dpi)/2,15*dpi,p.Subtle);base.OnPaint(e);}
   }
   public class GrovePanel:Panel {
-    public Func<Palette> Colors;public GrovePanel(){DoubleBuffered=true;SetStyle(ControlStyles.ResizeRedraw,true);}
+    public Func<Palette> Colors;int roundedWidth=-1,roundedHeight=-1,roundedDpi=-1;
+    public GrovePanel(){DoubleBuffered=true;SetStyle(ControlStyles.ResizeRedraw,true);RoundEdges();}
+    void RoundEdges(){if(Width<1||Height<1||roundedWidth==Width&&roundedHeight==Height&&roundedDpi==DeviceDpi)return;roundedWidth=Width;roundedHeight=Height;roundedDpi=DeviceDpi;float radius=Math.Min(18*DeviceDpi/96f,Math.Min(Width,Height)/2f);using(var path=Art.Round(new RectangleF(0,0,Width,Height),radius)){var previous=Region;Region=new Region(path);previous?.Dispose();}}
+    protected override void OnResize(EventArgs e){base.OnResize(e);RoundEdges();}
+    protected override void OnHandleCreated(EventArgs e){base.OnHandleCreated(e);RoundEdges();}
     protected override void OnPaintBackground(PaintEventArgs e){GlassSurface.Paint(this,e.Graphics,e.ClipRectangle,(Colors?.Invoke()??new Palette(false)).Panel);}
-    protected override void OnPaint(PaintEventArgs e){base.OnPaint(e);}
+    protected override void OnPaint(PaintEventArgs e){base.OnPaint(e);var p=Colors?.Invoke()??new Palette(false);float radius=Math.Min(18*DeviceDpi/96f,Math.Min(Width,Height)/2f);e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;using(var path=Art.Round(new RectangleF(.5f,.5f,Width-1,Height-1),radius))using(var pen=new Pen(Color.FromArgb(120,p.Line)))e.Graphics.DrawPath(pen,path);}
   }
 }
 

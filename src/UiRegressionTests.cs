@@ -11,6 +11,21 @@ namespace TokenGrove {
     static readonly BindingFlags Hidden=BindingFlags.Instance|BindingFlags.NonPublic;
     static string View(MainWindow form){return (string)typeof(MainWindow).GetField("view",Hidden).GetValue(form);}
     static void DoubleClick(FloatingWindow form){typeof(Control).GetMethod("OnMouseDoubleClick",Hidden).Invoke(form,new object[]{new MouseEventArgs(MouseButtons.Left,2,10,10,0)});}
+    static Color ButtonPixel(GroveButton button){using(var bitmap=new Bitmap(42,42)){button.DrawToBitmap(bitmap,new Rectangle(0,0,42,42));return bitmap.GetPixel(21,4);}}
+    static void SidebarFeedback(Action<bool,string> check){
+      bool previous=Art.AnimationsEnabled;int leases=FramePacing.ActiveLeases;Art.AnimationsEnabled=true;
+      try{using(var form=new Form{StartPosition=FormStartPosition.Manual,Location=new Point(-20000,-20000),Size=new Size(100,100)})
+      using(var button=new GroveButton("",()=>{}){Nav=true,Quiet=true,Glyph="settings",Bounds=new Rectangle(10,10,42,42),Colors=()=>new Palette(false)}){
+        form.Controls.Add(button);form.Show();Application.DoEvents();var idle=ButtonPixel(button);
+        typeof(Control).GetMethod("OnMouseEnter",Hidden).Invoke(button,new object[]{EventArgs.Empty});
+        check(ButtonPixel(button).ToArgb()!=idle.ToArgb(),"Sidebar hover is visible in the first frame after pointer entry");
+        typeof(Control).GetMethod("OnMouseLeave",Hidden).Invoke(button,new object[]{EventArgs.Empty});
+        check(ButtonPixel(button).ToArgb()==idle.ToArgb(),"Leaving a sidebar button clears its hover without a trailing frame");
+        check(FramePacing.ActiveLeases==leases,"Sidebar hover releases its animation lease immediately on exit");
+        button.Selected=true;typeof(Control).GetMethod("OnMouseEnter",Hidden).Invoke(button,new object[]{EventArgs.Empty});typeof(Control).GetMethod("OnMouseLeave",Hidden).Invoke(button,new object[]{EventArgs.Empty});
+        check(ButtonPixel(button).ToArgb()==new Palette(false).Soft.ToArgb(),"Pointer exit preserves the selected sidebar page highlight");
+      }}finally{Art.AnimationsEnabled=previous;}
+    }
     public static void Run(string directory,Action<bool,string> check){
       Application.EnableVisualStyles();Application.SetCompatibleTextRenderingDefault(false);
       string original=Settings.Root;Settings.Root=Path.Combine(directory,"ui-settings");
@@ -26,10 +41,13 @@ namespace TokenGrove {
           }
           check(firstLayout,"The first usage page is sized before it can be presented");
           var usage=c.Main.Controls.OfType<UsageView>().Single();var search=usage.Controls.OfType<GroveSearch>().Single();search.Text="fixture-model";
+          check(usage.Region!=null&&!usage.Region.IsVisible(1,1)&&usage.Region.IsVisible(usage.Width/2,2),"Usage content clips its children to rounded surface corners");
           var date=usage.Controls.OfType<GroveDateInput>().First();date.Text="2026-01-02 03:04";
           c.ShowWidget();DoubleClick(c.Floating);
           check(ReferenceEquals(usage,c.Main.Controls.OfType<UsageView>().Single())&&search.Text=="fixture-model"&&date.Text=="2026-01-02 03:04","Restoring from the widget retains the existing query, model filter and controls");
           c.Main.SetView("settings");var settings=c.Main.Controls.OfType<GroveScrollPanel>().Single();
+          check(settings.Region!=null&&!settings.Region.IsVisible(1,1)&&settings.Region.IsVisible(settings.Width/2,2),"Settings content clips its children to matching rounded corners");
+          int savedWidth=settings.Width;settings.Width+=32;check(!settings.Region.IsVisible(settings.Width-1,1)&&settings.Region.IsVisible(settings.Width-2,settings.Height/2),"Surface corner clipping follows resized content bounds");settings.Width=savedWidth;
           typeof(Control).GetMethod("OnKeyDown",Hidden).Invoke(settings,new object[]{new KeyEventArgs(Keys.End)});
           int offset=(int)typeof(GroveScrollPanel).GetField("offset",Hidden).GetValue(settings);c.ShowWidget();DoubleClick(c.Floating);
           check(offset>0&&(int)typeof(GroveScrollPanel).GetField("offset",Hidden).GetValue(settings)==offset,"Widget restoration preserves the settings scroll position");
@@ -55,6 +73,7 @@ namespace TokenGrove {
         var legacy=J.Serializer().Deserialize<Settings>("{\"mainOpacity\":95,\"themeMode\":\"light\"}");legacy.Normalize();
         check(legacy.mainOpacity==95&&legacy.surfaceOpacity==78&&legacy.mainView=="overview","Existing settings gain a glass tint default while preserving window opacity");
         var invalid=new Settings{surfaceOpacity=0,mainView="missing"};invalid.Normalize();check(invalid.surfaceOpacity==35&&invalid.mainView=="overview","Invalid appearance settings are clamped to usable values");
+        SidebarFeedback(check);
       }finally{Settings.Root=original;}
     }
   }
