@@ -1,0 +1,88 @@
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.Diagnostics;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using Microsoft.Win32;
+
+namespace TokenGrove {
+  public sealed class HistoryItem {public string time,title,detail;}
+  public sealed class GroveContext:ApplicationContext {
+    public Settings Prefs=Settings.Load();public Snapshot Data=Snapshot.Empty();public DataCollector Collector=new DataCollector();
+    public readonly List<HistoryItem> History=new List<HistoryItem>();
+    public MainWindow Main;public FloatingWindow Floating;public NotifyIcon Tray;public ContextMenuStrip Menu;
+    public bool Quitting,Refreshing,Imported;public string Notice="正在检测本机账号…";
+    DateTime memoryAt=DateTime.MinValue;double memory;bool compactedAfterFirstSync;
+    public double MemoryMB{get{if(DateTime.UtcNow-memoryAt>TimeSpan.FromSeconds(15)){using(var p=Process.GetCurrentProcess())memory=p.WorkingSet64/1048576d;memoryAt=DateTime.UtcNow;}return memory;}}
+    readonly Timer sync=new Timer(),clock=new Timer();readonly Icon icon=Art.MakeIcon();
+    readonly Timer appearanceSave=new Timer{Interval=350},systemRefresh=new Timer{Interval=120};
+    bool systemDark=SystemAppearance.Dark;Palette palette;bool paletteDark;
+    public bool IsDark{get{return Prefs.EffectiveDark(systemDark);}}
+    public Palette Colors{get{if(palette==null||paletteDark!=IsDark){paletteDark=IsDark;palette=new Palette(paletteDark);}return palette;}}
+    public GroveContext(string[] args){
+      Directory.CreateDirectory(Settings.Root);try{History=J.Serializer().Deserialize<List<HistoryItem>>(J.Read(Path.Combine(Settings.Root,"history.json")))??History;}catch{}
+      try{var cache=ImportExport.LoadSnapshot(Path.Combine(Settings.Root,"snapshot.json"));Data=cache;Notice="上次同步的数据 · 正在更新";}catch{}
+      Art.AnimationsEnabled=Prefs.motion&&SystemAppearance.Animations;Main=new MainWindow(this);Floating=new FloatingWindow(this);Menu=new ContextMenuStrip();BuildMenu();Tray=new NotifyIcon{Icon=icon,Text="Token Grove · 额度小站",ContextMenuStrip=Menu,Visible=true};Tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWidget();};Tray.DoubleClick+=(s,e)=>ShowMain();
+      appearanceSave.Tick+=(s,e)=>{appearanceSave.Stop();Prefs.Save();BuildMenu();};systemRefresh.Tick+=(s,e)=>{systemRefresh.Stop();var dark=SystemAppearance.Dark;Art.AnimationsEnabled=Prefs.motion&&SystemAppearance.Animations;if(systemDark!=dark){systemDark=dark;Redraw();BuildMenu();}Main.UpdateAnimation();Floating.UpdateAnimation();};SystemEvents.UserPreferenceChanged+=PreferenceChanged;
+      sync.Interval=Math.Max(60,Prefs.intervalSeconds)*1000;sync.Tick+=async(s,e)=>await Refresh();sync.Start();
+      clock.Interval=60000;clock.Tick+=(s,e)=>{if(Main.Visible&&!Main.IsDisposed)Main.Invalidate();if(Floating.Visible&&!Floating.IsDisposed)Floating.Invalidate();};clock.Start();
+      if(args.Contains("--widget")||(Prefs.widget&&!args.Contains("--dashboard")))ShowWidget();else Main.Show();_ = Refresh(true);
+      SystemEvents.PowerModeChanged+=PowerChanged;
+    }
+    void PowerChanged(object sender,PowerModeChangedEventArgs e){if(e.Mode==PowerModes.Resume&&!Quitting)Main.BeginInvoke(new Action(async()=>await Refresh()));}
+    public async Task Refresh(bool force=false){if(Quitting||Refreshing||Collector.Busy)return;Refreshing=true;Imported=false;Notice="正在同步 · 只读取额度与 Token";Redraw();try{
+      var data=await Collector.CollectAsync(force);if(data==null)return;var previous=Data;Data=data;Notice="本机同步完成 · "+DateTime.Now.ToString("HH:mm");
+      History.Insert(0,new HistoryItem{time=J.Iso(DateTime.UtcNow),title="本机账号与用量已更新",detail=string.Join(" · ",Data.accounts.Select(a=>a.label+" "+a.Status))});if(History.Count>40)History.RemoveRange(40,History.Count-40);
+      await Task.Run(()=>{J.Write(Path.Combine(Settings.Root,"snapshot.json"),data);J.Write(Path.Combine(Settings.Root,"history.json"),History);});
+      if(!Quitting){Main.UpdateData(previous);Floating.SnapshotChanged(previous);Floating.AccessibleDescription=string.Join("；",Data.accounts.Select(a=>a.label+"，"+a.Status));}
+    }catch{Notice="同步未完成 · 保留上次结果，稍后重试";}finally{Refreshing=false;if(!Quitting){Redraw();if(!compactedAfterFirstSync){compactedAfterFirstSync=true;Main.BeginInvoke(new Action(()=>{System.Runtime.GCSettings.LargeObjectHeapCompactionMode=System.Runtime.GCLargeObjectHeapCompactionMode.CompactOnce;GC.Collect(2,GCCollectionMode.Forced,true,true);memoryAt=DateTime.MinValue;}));}}}}
+    public void Redraw(){if(Main!=null&&!Main.IsDisposed){Main.ApplyColors();Main.ApplyAppearance();Main.Invalidate();}if(Floating!=null&&!Floating.IsDisposed){Floating.ApplyAppearance();Floating.Invalidate();}}
+    void PreferenceChanged(object sender,UserPreferenceChangedEventArgs e){QueueAppearanceRefresh();}
+    public void QueueAppearanceRefresh(){if(Quitting||Main==null||!Main.IsHandleCreated||Main.IsDisposed)return;try{Main.BeginInvoke(new Action(()=>{if(!Quitting){systemRefresh.Stop();systemRefresh.Start();}}));}catch{}}
+    public void SetOpacity(bool compact,int percent){if(compact)Prefs.widgetOpacity=percent;else Prefs.mainOpacity=percent;Prefs.Normalize();if(compact)Floating.ApplyAppearance();else Main.ApplyAppearance();appearanceSave.Stop();appearanceSave.Start();}
+    public void SetTheme(string mode){Prefs.themeMode=mode;SavePrefs();}
+    public void ShowMain(string view="overview"){Main.SetView(view);Main.Show();Main.WindowState=FormWindowState.Normal;Main.Activate();Floating.Hide();}
+    public void ShowWidget(){Prefs.widget=true;Prefs.Save();Main.Hide();Floating.TopMost=Prefs.topmost;Floating.Show();Floating.Activate();GC.Collect(2,GCCollectionMode.Optimized,false);}
+    public void HideWidget(){Prefs.widget=false;Prefs.Save();Floating.Hide();Notice="已收入系统托盘";}
+    public void SavePrefs(){Prefs.Save();Art.AnimationsEnabled=Prefs.motion&&SystemAppearance.Animations;sync.Interval=Math.Max(60,Prefs.intervalSeconds)*1000;Floating.TopMost=Prefs.topmost;Main.UpdateAnimation();Floating.UpdateAnimation();BuildMenu();Redraw();}
+    void BuildMenu(){if(Menu==null)return;Menu.Items.Clear();Menu.BackColor=Colors.Panel;Menu.ForeColor=Colors.Text;Menu.Renderer=new GroveMenuRenderer(Colors);Menu.Font=Art.CachedFont(12);Menu.Items.Add("打开用量工作台",null,(s,e)=>ShowMain());Menu.Items.Add("查询时间段 Token…",null,(s,e)=>ShowMain("usage"));Menu.Items.Add("显示悬浮小窗",null,(s,e)=>ShowWidget());Menu.Items.Add("隐藏悬浮小窗",null,(s,e)=>HideWidget());Menu.Items.Add(new ToolStripSeparator());Menu.Items.Add("刷新账号额度",null,async(s,e)=>await Refresh(true));var top=new ToolStripMenuItem("悬浮窗置顶"){Checked=Prefs.topmost,CheckOnClick=true};top.CheckedChanged+=(s,e)=>{Prefs.topmost=top.Checked;SavePrefs();};Menu.Items.Add(top);
+      var themes=new ToolStripMenuItem("颜色主题");foreach(var pair in new[]{new[]{"system","跟随 Windows"},new[]{"light","浅色"},new[]{"dark","深色"}}){string mode=pair[0];var item=new ToolStripMenuItem(pair[1]){Checked=Prefs.themeMode==mode};item.Click+=(s,e)=>SetTheme(mode);themes.DropDownItems.Add(item);}Menu.Items.Add(themes);
+      var opacity=new ToolStripMenuItem("悬浮窗不透明度");foreach(int n in new[]{65,80,90,100}){int value=n;var item=new ToolStripMenuItem(n+"%"+(n==100?" · 完全不透明":"")){Checked=Prefs.widgetOpacity==n};item.Click+=(s,e)=>SetOpacity(true,value);opacity.DropDownItems.Add(item);}Menu.Items.Add(opacity);Menu.Items.Add("外观与透明度…",null,(s,e)=>ShowMain("settings"));Menu.Items.Add("导出 Token 明细",null,(s,e)=>ImportExport.ExportCsv(Main,Data.models));Menu.Items.Add(new ToolStripSeparator());Menu.Items.Add("退出额度小站",null,(s,e)=>Quit());ColorItems(Menu.Items);}
+    void ColorItems(ToolStripItemCollection items){foreach(ToolStripItem item in items){item.ForeColor=Colors.Text;item.BackColor=Colors.Panel;var drop=item as ToolStripDropDownItem;if(drop!=null)ColorItems(drop.DropDownItems);}}
+    public void SetStartup(bool enabled){try{using(var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")){if(enabled)key.SetValue("TokenGrove","\""+Application.ExecutablePath+"\" --widget");else key.DeleteValue("TokenGrove",false);}Prefs.startup=enabled;SavePrefs();}catch{MessageBox.Show(Main,"无法修改开机启动设置，请检查当前账户权限。","Token Grove");}}
+    public void Import(){using(var dialog=new OpenFileDialog{Filter="用量快照 (*.json)|*.json",Title="导入 Token Grove 快照"}){if(dialog.ShowDialog(Main)!=DialogResult.OK)return;try{Data=ImportExport.LoadSnapshot(dialog.FileName);Imported=true;Notice="离线快照 · 点击刷新恢复本机实时数据";Main.UpdateData();Redraw();}catch(Exception e){MessageBox.Show(Main,"快照无法导入："+e.Message,"Token Grove");}}}
+    public void Detail(Account a){if(a==null)return;var text=a.label+" · "+a.Status+"\n\n数据来源："+a.source+"\n范围："+a.scope+"\n账号："+(Prefs.privacy?J.Mask(a.email):a.email)+"\n\n"+string.Join("\n",a.windows.Select(w=>w.label+"："+(w.usedPercent.HasValue?w.usedPercent.Value.ToString("0.#")+"% 已用":"未知")+"\n"+w.ResetText))+"\n\n"+a.message+"\n\n"+string.Join("\n",a.windows.Select(w=>(w.label??"额度窗口")+"预估剩余："+(w.estimate!=null&&w.estimate.Current(w,DateTime.UtcNow)?J.Tokens(w.estimate.remainingTokens)+" Token":"采样不足")))+"\n\n最近更新："+(J.Time(a.lastSyncedAt)?.ToLocalTime().ToString("MM-dd HH:mm")??"未知");MessageBox.Show(Main,text,"账号详情",MessageBoxButtons.OK,MessageBoxIcon.Information);}
+    public void About(){var p=Process.GetCurrentProcess();MessageBox.Show(Main,"Token Grove Desktop 2.5.0\nWindows 原生程序 · 无浏览器内核 · 无 Node 常驻\n\n当前工作集："+(p.WorkingSet64/1048576d).ToString("0.0")+" MB\n私有内存："+(p.PrivateMemorySize64/1048576d).ToString("0.0")+" MB\n最近同步："+(Collector.LastTiming??"等待首次同步")+"\n\n默认每 5 分钟同步，Token 日志按字节位置增量读取。\n交互结束后停止连续绘制；完全退出请使用托盘菜单。\n\nClaude 额度读取的是已有桌面/Code 授权，兼容接口可能变化；不可用时保留有时间标记的本机缓存。\nChatGPT 栏对应 Codex 订阅额度。\n所有 Token 统计仅包含本机记录。","关于额度小站");}
+    public void Quit(){if(Quitting)return;Quitting=true;Prefs.widgetX=Floating.Left;Prefs.widgetY=Floating.Top;Prefs.Save();sync.Stop();clock.Stop();appearanceSave.Stop();systemRefresh.Stop();Tray.Visible=false;Tray.Dispose();Main.Close();Floating.Close();SystemEvents.PowerModeChanged-=PowerChanged;SystemEvents.UserPreferenceChanged-=PreferenceChanged;ExitThread();}
+    protected override void Dispose(bool disposing){if(disposing){sync.Dispose();clock.Dispose();appearanceSave.Dispose();systemRefresh.Dispose();icon.Dispose();Menu.Dispose();}base.Dispose(disposing);}
+  }
+  public static class ImportExport {
+    static void NormalizeEstimate(object raw){if(raw==null)return;foreach(var name in new[]{"sampleTokens","remainingTokens"}){var value=J.Num(J.Get(raw,name));if(!value.HasValue||value<0||value>9007199254740991d)throw new InvalidDataException("估算 Token 数量无效");J.Obj(raw)[name]=(long)Math.Round(value.Value,MidpointRounding.AwayFromZero);}}
+    static void ValidateEstimate(Estimate estimate){if(estimate==null)return;if(estimate.remainingTokens<0||estimate.remainingTokens>9007199254740991L||estimate.sampleTokens<0||estimate.sampleTokens>9007199254740991L||double.IsNaN(estimate.sampleUsedPercent)||double.IsInfinity(estimate.sampleUsedPercent)||estimate.sampleUsedPercent<0||estimate.sampleUsedPercent>100)throw new InvalidDataException("预估数据无效");foreach(var date in new[]{estimate.startUtc,estimate.endUtc,estimate.measuredAt})if(date!=null&&!J.Time(date).HasValue)throw new InvalidDataException("预估时间无效");if(estimate.startUtc!=null&&estimate.endUtc!=null&&J.Time(estimate.endUtc)<=J.Time(estimate.startUtc))throw new InvalidDataException("预估窗口无效");}
+    public static void ExportRecords(IWin32Window owner,List<Record> rows,UsageResult usage){using(var dialog=new SaveFileDialog{Filter="CSV 用量记录|*.csv",FileName="token-grove-records-"+usage.fromUtc.ToLocalTime().ToString("yyyyMMdd-HHmm")+".csv"}){if(dialog.ShowDialog(owner)!=DialogResult.OK)return;var csv=new StringBuilder("时间UTC,客户端,模型,输入Token,输出Token,读取缓存,写入缓存,总Token\r\n");foreach(var r in rows)csv.AppendLine(string.Join(",",new object[]{J.Iso(r.time),r.provider=="claude"?"Claude":"Codex",r.model,r.input,r.output,r.cached,r.write,r.total}.Select(Cell)));File.WriteAllText(dialog.FileName,csv.ToString(),new UTF8Encoding(true));}}
+    static void ValidateUsage(WindowTokenUsage u){if(u==null)return;if(u.state!="ready"&&u.state!="unknown_window"&&u.state!="expired")throw new InvalidDataException("窗口 Token 状态无效");if(u.records<0||u.usedTokens.HasValue&&(u.usedTokens<0||u.usedTokens>9007199254740991L))throw new InvalidDataException("窗口 Token 数量无效");foreach(var text in new[]{u.startUtc,u.endUtc,u.measuredThroughUtc})if(text!=null&&!J.Time(text).HasValue)throw new InvalidDataException("窗口 Token 时间无效");if(u.state=="ready"){var start=J.Time(u.startUtc);var end=J.Time(u.endUtc);var through=J.Time(u.measuredThroughUtc);if(!u.usedTokens.HasValue||!start.HasValue||!end.HasValue||!through.HasValue||end<=start||through<start||through>=end)throw new InvalidDataException("窗口 Token 时间范围无效");}else if(u.usedTokens.HasValue)throw new InvalidDataException("未知窗口不能包含确定的 Token 数量");}
+    public static void ExportUsage(IWin32Window owner,UsageResult usage,bool daily){using(var dialog=new SaveFileDialog{Filter="CSV 用量明细|*.csv",FileName="token-grove-range-"+usage.fromUtc.ToLocalTime().ToString("yyyyMMdd-HHmm")+".csv"}){if(dialog.ShowDialog(owner)!=DialogResult.OK)return;var csv=new StringBuilder();if(daily){csv.AppendLine("开始UTC,截止UTC,日期,Claude Token,ChatGPT Token,总Token");foreach(var d in usage.daily)csv.AppendLine(string.Join(",",new object[]{J.Iso(usage.fromUtc),J.Iso(usage.toUtc),d.date,d.claude,d.chatgpt,d.claude+d.chatgpt}.Select(Cell)));}else{csv.AppendLine("开始UTC,截止UTC,提供方,模型,输入Token,输出Token,读取缓存,写入缓存,总Token");foreach(var m in usage.models)csv.AppendLine(string.Join(",",new object[]{J.Iso(usage.fromUtc),J.Iso(usage.toUtc),m.provider,m.name,m.inputTokens,m.outputTokens,m.cachedTokens,m.cacheWriteTokens,m.totalTokens}.Select(Cell)));}File.WriteAllText(dialog.FileName,csv.ToString(),new UTF8Encoding(true));}}
+    public static Snapshot LoadSnapshot(string path){
+      if(new FileInfo(path).Length>5*1024*1024)throw new InvalidDataException("文件不能超过 5 MB");var obj=J.Parse(J.Read(path).TrimStart('\ufeff'));if(J.Num(J.Get(obj,"version"))!=1)throw new InvalidDataException("需要 version 1 的 Token Grove 快照");
+      // The original browser export could contain fractional estimate samples.
+      foreach(var raw in J.Items(J.Get(obj,"accounts"))){NormalizeEstimate(J.Get(raw,"estimate"));NormalizeEstimate(J.Get(raw,"weekEstimate"));foreach(var window in J.Items(J.Get(raw,"windows")))NormalizeEstimate(J.Get(window,"estimate"));}
+      var snapshot=J.Serializer().Deserialize<Snapshot>(J.Serializer().Serialize(obj));if(snapshot==null||snapshot.accounts==null||snapshot.models==null||snapshot.daily==null||snapshot.accounts.Count>20||snapshot.models.Count>300||snapshot.daily.Count>400)throw new InvalidDataException("快照结构不正确");
+      if(snapshot.accounts.Select(a=>a.id).Distinct().Count()!=snapshot.accounts.Count)throw new InvalidDataException("账号标识不能重复");
+      foreach(var a in snapshot.accounts){if(a.provider!="claude"&&a.provider!="chatgpt")throw new InvalidDataException("账号提供方无效");if(a.windows==null)a.windows=new List<WindowQuota>();foreach(var w in a.windows){if(w.usedPercent.HasValue&&(double.IsNaN(w.usedPercent.Value)||double.IsInfinity(w.usedPercent.Value)||w.usedPercent<0||w.usedPercent>100))throw new InvalidDataException("额度百分比无效");if(w.resetsAt!=null&&!J.Time(w.resetsAt).HasValue)throw new InvalidDataException("重置时间无效");ValidateUsage(w.localUsage);ValidateEstimate(w.estimate);}ValidateEstimate(a.estimate);ValidateEstimate(a.weekEstimate);}
+      foreach(var m in snapshot.models)if((m.provider!="claude"&&m.provider!="chatgpt")||m.inputTokens<0||m.outputTokens<0||m.cachedTokens<0||m.cacheWriteTokens<0||m.totalTokens<0)throw new InvalidDataException("模型 Token 数量无效");
+      foreach(var d in snapshot.daily){DateTime date;if(d.claude<0||d.chatgpt<0||!DateTime.TryParseExact(d.date,"yyyy-MM-dd",System.Globalization.CultureInfo.InvariantCulture,System.Globalization.DateTimeStyles.None,out date))throw new InvalidDataException("每日统计无效");}return snapshot;
+    }
+    public static void ExportJson(IWin32Window owner,Snapshot data){using(var dialog=new SaveFileDialog{Filter="JSON 用量快照|*.json",FileName="token-grove-"+DateTime.Now.ToString("yyyy-MM-dd")+".json"}){if(dialog.ShowDialog(owner)!=DialogResult.OK)return;File.WriteAllText(dialog.FileName,J.Serializer().Serialize(data),new UTF8Encoding(false));}}
+    static string Cell(object value){var s=Convert.ToString(value);if(s.Length>0&&"=+-@\t\r".Contains(s[0]))s="'"+s;return "\""+s.Replace("\"","\"\"")+"\"";}
+    public static void ExportCsv(IWin32Window owner,IEnumerable<ModelUsage> models){using(var dialog=new SaveFileDialog{Filter="CSV 模型用量|*.csv",FileName="token-grove-models-"+DateTime.Now.ToString("yyyy-MM-dd")+".csv"}){if(dialog.ShowDialog(owner)!=DialogResult.OK)return;var csv=new StringBuilder("提供方,模型,输入Token,输出Token,读取缓存,写入缓存,总Token\r\n");foreach(var m in models)csv.AppendLine(string.Join(",",new object[]{m.provider,m.name,m.inputTokens,m.outputTokens,m.cachedTokens,m.cacheWriteTokens,m.totalTokens}.Select(Cell)));File.WriteAllText(dialog.FileName,csv.ToString(),new UTF8Encoding(true));}}
+  }
+}
+
+
+

@@ -1,0 +1,19 @@
+/Token Grove.exe
+/dist/
+/artifacts/
+/work/
+*.pdb
+*.user
+*.suo
+*.tmp
+.vs/
+.idea/
+.DS_Store
+# Runtime account data and exports are never part of this repository.
+.local/
+settings.json
+snapshot.json
+history.json
+*.jsonl
+*.csv
+*.zip
