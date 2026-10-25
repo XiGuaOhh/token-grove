@@ -11,7 +11,7 @@ namespace TokenGrove {
     readonly Dictionary<string,GroveButton> themes=new Dictionary<string,GroveButton>();
     readonly Dictionary<string,double?> previous=new Dictionary<string,double?>();
     readonly ToolTip tips=new ToolTip{InitialDelay=500,ReshowDelay=180,AutoPopDelay=8000};
-    GroveButton refresh,widget,help;GroveScrollPanel settings;UsageView usage;
+    GroveButton refresh,widget,help;GroveScrollPanel settings;UsageView usage;PlansView plans;
     GroveSlider widgetSlider,mainSlider,surfaceSlider;Label widgetAmount,mainAmount,surfaceAmount;bool syncingAppearance,layoutBusy;string lastTip;
     float W{get{return ClientSize.Width/Math.Max(1,Scale);}}float H{get{return ClientSize.Height/Math.Max(1,Scale);}}
     const float CX=90;float CW{get{return W-CX-22;}}float CardWidth{get{return (CW-16)/2;}}
@@ -19,26 +19,30 @@ namespace TokenGrove {
     public MainWindow(GroveContext context):base(context){
       Text="Token Grove";AccessibleName="Token Grove 额度与用量";FormBorderStyle=FormBorderStyle.Sizable;MaximizeBox=true;MinimizeBox=true;StartPosition=FormStartPosition.CenterScreen;
       var area=Screen.PrimaryScreen.WorkingArea;ClientSize=new Size((int)(1040*Scale),Math.Min((int)(700*Scale),area.Height-(int)(62*Scale)));MinimumSize=new Size((int)(960*Scale),Math.Min((int)(640*Scale),area.Height));
-      int y=82;foreach(var pair in new[]{new[]{"overview","额度","overview"},new[]{"usage","用量","models"},new[]{"accounts","账号","accounts"},new[]{"settings","设置","settings"}}){string id=pair[0];var b=Button("",new Rectangle(13,y,42,42),()=>SetView(id),false,pair[2]);b.Nav=true;b.Quiet=true;b.AccessibleName=pair[1];tips.SetToolTip(b,pair[1]);nav[id]=b;y+=57;}
+      int y=82;foreach(var pair in new[]{new[]{"overview","额度","overview"},new[]{"usage","用量","models"},new[]{"plans","计划","calendar"},new[]{"accounts","账号","accounts"},new[]{"settings","设置","settings"}}){string id=pair[0];var b=Button("",new Rectangle(13,y,42,42),()=>SetView(id),false,pair[2]);b.Nav=true;b.Quiet=true;b.AccessibleName=pair[1];tips.SetToolTip(b,pair[1]);nav[id]=b;y+=57;}
       widget=Button("",new Rectangle(),()=>C.ShowWidget(),false,"expand");widget.AccessibleName="悬浮窗";refresh=Button("刷新",new Rectangle(),async()=>await C.Refresh(true),true,"refresh");help=Button("",new Rectangle(),()=>C.About(),false,"info");help.Quiet=true;help.AccessibleName="关于与资源占用";
       tips.SetToolTip(widget,"悬浮窗");tips.SetToolTip(refresh,"更新账号额度");tips.SetToolTip(help,"关于 / 资源占用");MouseMove+=ShowDetailsTip;PrepareSurface();SetView(C.Prefs.mainView);
     }
     public void SetView(string value){if(value=="models")value="usage";if(value=="history")value="accounts";
       SuspendLayout();try{
-        if(settings!=null)settings.Visible=false;if(usage!=null)usage.Visible=false;
-        view=new[]{"overview","usage","accounts","settings"}.Contains(value)?value:"overview";C.Prefs.mainView=view;
+        if(settings!=null)settings.Visible=false;if(usage!=null)usage.Visible=false;if(plans!=null)plans.Visible=false;
+        view=new[]{"overview","usage","plans","accounts","settings"}.Contains(value)?value:"overview";C.Prefs.mainView=view;
         if(view=="settings"&&settings==null)BuildSettings();
         if(view=="usage"&&usage==null){usage=new UsageView(C,Scale){Visible=false};Place(usage,CX,76,CW,H-115);Controls.Add(usage);}
+        if(view=="plans"&&plans==null){plans=new PlansView(C,Scale){Visible=false};Place(plans,CX,76,CW,H-115);Controls.Add(plans);}
         LayoutSurface();ApplyColors();foreach(var item in nav){item.Value.Selected=item.Key==view;item.Value.Invalidate();}
-        if(settings!=null)settings.Visible=view=="settings";if(usage!=null)usage.Visible=view=="usage";
+        if(settings!=null)settings.Visible=view=="settings";if(usage!=null)usage.Visible=view=="usage";if(plans!=null){plans.Visible=view=="plans";if(view=="plans")plans.RefreshData();}
         UpdateData();EnterView();
       }finally{ResumeLayout(false);}Invalidate(true);
     }
     public void UpdateData(Snapshot old=null){if(old!=null){previous.Clear();foreach(var a in old.accounts)foreach(var w in a.windows)previous[a.provider+":"+w.id]=w.usedPercent;AnimateData();}if(view=="usage")usage?.UpdateSnapshot();AccessibleDescription=string.Join("；",C.Data.accounts.Select(a=>a.label+" "+a.Status));Invalidate();}
     protected override void OnSoftClose(){C.ShowWidget();}
-    protected override void LayoutSurface(){if(layoutBusy||widget==null)return;layoutBusy=true;try{Place(widget,W-164,20,36,33);Place(refresh,W-118,20,96,33);Place(help,15,H-57,38,34);if(settings!=null)Place(settings,CX,76,CW,H-115);if(usage!=null)Place(usage,CX,76,CW,H-115);}finally{layoutBusy=false;}}
+    protected override void LayoutSurface(){if(layoutBusy||widget==null)return;layoutBusy=true;try{Place(widget,W-164,20,36,33);Place(refresh,W-118,20,96,33);Place(help,15,H-57,38,34);if(settings!=null)Place(settings,CX,76,CW,H-115);if(usage!=null)Place(usage,CX,76,CW,H-115);if(plans!=null)Place(plans,CX,76,CW,H-115);}finally{layoutBusy=false;}}
     public void ApplyColors(){var p=C.Colors;BackColor=GlassActive?Color.Black:p.Bg;foreach(Control b in Controls)b.Invalidate();if(refresh!=null){refresh.Enabled=!C.Refreshing;refresh.Text=C.Refreshing?"更新中":"刷新";}
-      if(settings!=null){settings.RefreshAppearance();foreach(Control child in settings.ContentControls){child.BackColor=p.Panel;child.ForeColor=child.Tag as string=="muted"?p.Muted:p.Text;child.Invalidate();}foreach(var item in themes){item.Value.Selected=C.Prefs.themeMode==item.Key;item.Value.Invalidate();}syncingAppearance=true;try{widgetSlider.Value=C.Prefs.widgetOpacity;widgetAmount.Text=C.Prefs.widgetOpacity+"%";mainSlider.Value=C.Prefs.mainOpacity;mainAmount.Text=C.Prefs.mainOpacity+"%";surfaceSlider.Value=C.Prefs.surfaceOpacity;surfaceAmount.Text=C.Prefs.surfaceOpacity+"%";}finally{syncingAppearance=false;}}usage?.ApplyColors();}
+      if(settings!=null){settings.RefreshAppearance();foreach(Control child in settings.ContentControls){child.BackColor=p.Panel;child.ForeColor=child.Tag as string=="muted"?p.Muted:p.Text;child.Invalidate();}foreach(var item in themes){item.Value.Selected=C.Prefs.themeMode==item.Key;item.Value.Invalidate();}syncingAppearance=true;try{widgetSlider.Value=C.Prefs.widgetOpacity;widgetAmount.Text=C.Prefs.widgetOpacity+"%";mainSlider.Value=C.Prefs.mainOpacity;mainAmount.Text=C.Prefs.mainOpacity+"%";surfaceSlider.Value=C.Prefs.surfaceOpacity;surfaceAmount.Text=C.Prefs.surfaceOpacity+"%";}finally{syncingAppearance=false;}}usage?.ApplyColors();plans?.ApplyColors();}
+    public bool FlushPlans(){return plans==null||plans.Flush();}
+    public void RefreshPlans(){if(nav.ContainsKey("plans")){nav["plans"].Alert=C.Plans.ReadyCount>0;nav["plans"].AccessibleDescription=C.Plans.ReadyCount+" 个计划待处理";nav["plans"].Invalidate();}plans?.RefreshData();}
+    public void FocusReadyPlan(){plans?.FocusReady();}
     Label Label(string text,float x,float y,float width,float height,float size=12){var label=new GroveLabel{Text=text,Font=Art.Font(size*Scale),BackColor=C.Colors.Panel,ForeColor=C.Colors.Text,AutoEllipsis=true};Place(label,x,y,width,height);settings.ContentControls.Add(label);return label;}
     void BuildSettings(){settings=new GroveScrollPanel{Colors=()=>C.Colors,Visible=false};Place(settings,CX,76,CW,H-115);float width=CW,right=width-330;
       Label("主题",24,27,150,27);int i=0;foreach(var pair in new[]{new[]{"system","跟随系统"},new[]{"light","浅色"},new[]{"dark","深色"}}){string mode=pair[0];var button=new GroveButton(pair[1],()=>C.SetTheme(mode)){Colors=()=>C.Colors,Anchor=AnchorStyles.Top|AnchorStyles.Right};Place(button,right+i*96,24,88,33);themes[mode]=button;settings.ContentControls.Add(button);i++;}
@@ -51,7 +55,7 @@ namespace TokenGrove {
     void SettingsButton(string text,float x,float y,float width,Action action,string glyph=null){var b=new GroveButton(text,action){Colors=()=>C.Colors,Glyph=glyph};Place(b,x,y,width,34);settings.ContentControls.Add(b);}
     void ToggleRow(string title,bool state,Action<bool> setter,float y,float width,string detail=null){var label=Label(title,24,y,width-130,28);var toggle=new GroveSwitch(title,state,v=>{setter(v);C.SavePrefs();}){Colors=()=>C.Colors,Anchor=AnchorStyles.Top|AnchorStyles.Right};Place(toggle,width-80,y,44,25);settings.ContentControls.Add(toggle);if(detail!=null){tips.SetToolTip(label,detail);tips.SetToolTip(toggle,detail);}}
     void OpacityRow(string title,bool compact,float y,float width,bool surface=false){Label(title,24,y,width-370,28);int value=surface?C.Prefs.surfaceOpacity:compact?C.Prefs.widgetOpacity:C.Prefs.mainOpacity;var amount=Label(value+"%",width-91,y,55,26);amount.TextAlign=ContentAlignment.MiddleRight;amount.Anchor=AnchorStyles.Top|AnchorStyles.Right;var slider=new GroveSlider{Colors=()=>C.Colors,Minimum=surface?35:compact?55:75,Maximum=100,Value=value,AccessibleName=title,Anchor=AnchorStyles.Top|AnchorStyles.Right};Place(slider,width-345,y-1,245,30);slider.ValueChanged+=(s,e)=>{amount.Text=slider.Value+"%";if(!syncingAppearance){if(surface)C.SetSurfaceOpacity(slider.Value);else C.SetOpacity(compact,slider.Value);}};settings.ContentControls.Add(slider);if(surface){surfaceSlider=slider;surfaceAmount=amount;tips.SetToolTip(slider,"毛玻璃开启时调整卡片、设置和用量页的底板；文字与数据保持清晰。");}else if(compact){widgetSlider=slider;widgetAmount=amount;}else{mainSlider=slider;mainAmount=amount;}}
-    protected override void PaintSurface(Graphics g){var p=C.Colors;if(!GlassActive)using(var b=new SolidBrush(p.Side))g.FillRectangle(b,0,0,68,H);Art.Line(g,68,18,68,H-18,p.Line);Art.Clover(g,24,25,21,p.Green);string title=view=="overview"?"额度":view=="usage"?"Token 用量":view=="accounts"?"账号":"设置";Art.Text(g,title,CX,23,21,p.Text,true);
+    protected override void PaintSurface(Graphics g){var p=C.Colors;if(!GlassActive)using(var b=new SolidBrush(p.Side))g.FillRectangle(b,0,0,68,H);Art.Line(g,68,18,68,H-18,p.Line);Art.Clover(g,24,25,21,p.Green);string title=view=="overview"?"额度":view=="usage"?"Token 用量":view=="plans"?"计划":view=="accounts"?"账号":"设置";Art.Text(g,title,CX,23,21,p.Text,true);
       if(view=="overview")Overview(g,p);else if(view=="accounts")Accounts(g,p);
       string status=C.Refreshing?"更新中":C.Imported?"离线快照":J.Time(C.Data.updatedAt)?.ToLocalTime().ToString("HH:mm")??"—";Art.Dot(g,CX,H-20,C.Refreshing?p.Warning:p.Green,4);Art.Text(g,status,CX+12,H-26,9.5f,p.Muted);Art.Text(g,C.MemoryMB.ToString("0")+" MB",W-109,H-26,9.5f,p.Subtle,false,87,StringAlignment.Far);}
     void Overview(Graphics g,Palette p){Card(g,p,new RectangleF(CX,78,CardWidth,366),C.Data.accounts.FirstOrDefault(a=>a.provider=="claude"));Card(g,p,new RectangleF(CX+CardWidth+16,78,CardWidth,366),C.Data.accounts.FirstOrDefault(a=>a.provider=="chatgpt"));

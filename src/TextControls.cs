@@ -6,7 +6,7 @@ namespace TokenGrove {
   public sealed class GroveEdit:TextBox {
     IntPtr nativeFont;bool applying;readonly OpaqueControlBuffer opaque=new OpaqueControlBuffer();
     void ApplyFont(){if(applying||!IsHandleCreated||IsDisposed||Disposing)return;var next=Typography.NativeFont(Font);if(next==IntPtr.Zero)return;applying=true;try{Typography.SendMessage(Handle,0x30,next,new IntPtr(1));var old=nativeFont;nativeFont=next;if(old!=IntPtr.Zero)Typography.DeleteObject(old);}finally{applying=false;}}
-    protected override void WndProc(ref Message m){base.WndProc(ref m);if(m.Msg==0x30&&!applying)ApplyFont();switch(m.Msg){case 0xF:case 0x7:case 0x8:case 0xC:case 0x100:case 0x101:case 0x102:case 0x10E:case 0x10F:case 0xB1:case 0xB7:case 0xC2:case 0x200:case 0x202:case 0x300:case 0x302:case 0x303:case 0x304:opaque.Paint(this);break;}}
+    protected override void WndProc(ref Message m){base.WndProc(ref m);if(m.Msg==0x30&&!applying)ApplyFont();switch(m.Msg){case 0x200:if((m.WParam.ToInt64()&1)!=0)opaque.Paint(this);break;case 0xF:case 0x7:case 0x8:case 0xC:case 0x100:case 0x101:case 0x102:case 0x10E:case 0x10F:case 0x114:case 0x115:case 0x20A:case 0xB1:case 0xB6:case 0xB7:case 0xC2:case 0x201:case 0x202:case 0x300:case 0x302:case 0x303:case 0x304:opaque.Paint(this);break;}}
     protected override void OnHandleCreated(EventArgs e){base.OnHandleCreated(e);ApplyFont();}
     protected override void OnFontChanged(EventArgs e){base.OnFontChanged(e);ApplyFont();}
     protected override void OnHandleDestroyed(EventArgs e){base.OnHandleDestroyed(e);if(nativeFont!=IntPtr.Zero){Typography.DeleteObject(nativeFont);nativeFont=IntPtr.Zero;}}

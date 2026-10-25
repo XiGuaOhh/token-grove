@@ -35,7 +35,7 @@ namespace TokenGrove {
           c.Prefs=new Settings{themeMode="light",glass=true,motion=false,mainOpacity=100,widgetOpacity=100,surfaceOpacity=65};c.Imported=true;c.SavePrefs();
           c.Main.StartPosition=FormStartPosition.Manual;c.Main.Location=new Point(-20000,-20000);c.Floating.Location=new Point(-20000,-20000);
           bool firstLayout=true;c.Main.ControlAdded+=(s,e)=>{if(e.Control is UsageView)firstLayout=e.Control.Left>=80&&e.Control.Top>=70&&e.Control.Width>800;};
-          foreach(string page in new[]{"overview","accounts","settings","usage"}){
+          foreach(string page in new[]{"overview","accounts","settings","plans","usage"}){
             c.Main.SetView(page);c.Main.Show();Application.DoEvents();c.ShowWidget();DoubleClick(c.Floating);Application.DoEvents();
             check(View(c.Main)==page&&c.Main.Visible&&!c.Floating.Visible,"Floating double-click restores the previous "+page+" page");
           }
@@ -45,6 +45,11 @@ namespace TokenGrove {
           var date=usage.Controls.OfType<GroveDateInput>().First();date.Text="2026-01-02 03:04";
           c.ShowWidget();DoubleClick(c.Floating);
           check(ReferenceEquals(usage,c.Main.Controls.OfType<UsageView>().Single())&&search.Text=="fixture-model"&&date.Text=="2026-01-02 03:04","Restoring from the widget retains the existing query, model filter and controls");
+          c.Main.SetView("plans");var plans=c.Main.Controls.OfType<PlansView>().Single();plans.NewPlan();
+          var planTitle=plans.Controls.OfType<GroveEdit>().Single(x=>x.AccessibleName=="计划标题");var planBody=plans.Controls.OfType<GroveEdit>().Single(x=>x.AccessibleName=="计划内容");
+          planTitle.Text="先写好计划";planBody.Text="等额度重置后继续。\r\n保留具体要求。";plans.Controls.OfType<GroveCombo>().Single(x=>x.AccessibleName=="计划提醒方式").SelectedIndex=2;
+          check(plans.Flush()&&WorkPlanStore.Open(c.Plans.FilePath).Items[0].body.Contains("具体要求"),"Plan editor changes are saved as a local durable document");
+          c.ShowWidget();DoubleClick(c.Floating);check(View(c.Main)=="plans"&&planBody.Text.Contains("具体要求"),"The widget restores the plans page without losing its editor contents");
           c.Main.SetView("settings");var settings=c.Main.Controls.OfType<GroveScrollPanel>().Single();
           check(settings.Region!=null&&!settings.Region.IsVisible(1,1)&&settings.Region.IsVisible(settings.Width/2,2),"Settings content clips its children to matching rounded corners");
           int savedWidth=settings.Width;settings.Width+=32;check(!settings.Region.IsVisible(settings.Width-1,1)&&settings.Region.IsVisible(settings.Width-2,settings.Height/2),"Surface corner clipping follows resized content bounds");settings.Width=savedWidth;

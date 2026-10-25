@@ -69,7 +69,7 @@ namespace TokenGrove {
     public int intervalSeconds=300,threshold=80,widgetX=int.MinValue,widgetY=int.MinValue;
     public static string Root=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"TokenGrove");
     public static Settings Load(){try{var s=J.Serializer().Deserialize<Settings>(J.Read(Path.Combine(Root,"settings.json")))??new Settings();s.Normalize();return s;}catch{return new Settings();}}
-    public void Normalize(){if(themeMode!="light"&&themeMode!="dark")themeMode="system";if(!new[]{"overview","usage","accounts","settings"}.Contains(mainView))mainView="overview";widgetOpacity=Math.Max(55,Math.Min(100,widgetOpacity));mainOpacity=Math.Max(75,Math.Min(100,mainOpacity));surfaceOpacity=Math.Max(35,Math.Min(100,surfaceOpacity));intervalSeconds=Math.Max(60,Math.Min(3600,intervalSeconds));threshold=Math.Max(50,Math.Min(100,threshold));}
+    public void Normalize(){if(themeMode!="light"&&themeMode!="dark")themeMode="system";if(!new[]{"overview","usage","plans","accounts","settings"}.Contains(mainView))mainView="overview";widgetOpacity=Math.Max(55,Math.Min(100,widgetOpacity));mainOpacity=Math.Max(75,Math.Min(100,mainOpacity));surfaceOpacity=Math.Max(35,Math.Min(100,surfaceOpacity));intervalSeconds=Math.Max(60,Math.Min(3600,intervalSeconds));threshold=Math.Max(50,Math.Min(100,threshold));}
     public bool EffectiveDark(bool systemDark){return themeMode=="dark"||(themeMode!="light"&&systemDark);}
     public void Save(){Normalize();J.Write(Path.Combine(Root,"settings.json"),this);}
   }
