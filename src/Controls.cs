@@ -15,7 +15,7 @@ namespace TokenGrove {
     void Stop(){timer.Stop();if(frameLease){frameLease=false;FramePacing.Release();}}
     void Start(){if(Art.AnimationsEnabled&&Visible){if(!frameLease){frameLease=true;FramePacing.Acquire();}timer.Start();}else{Stop();blend=hover?1:0;Invalidate();}}
     protected override void OnPaintBackground(PaintEventArgs e){}
-    protected override void OnPaint(PaintEventArgs e){var p=Colors?.Invoke()??new Palette(false);float dpi=e.Graphics.DpiX/96f;if((Parent as PaintedWindow)?.GlassActive==true)e.Graphics.Clear(Color.Transparent);else e.Graphics.Clear(Nav?p.Side:Parent?.BackColor??p.Bg);e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;var bg=Primary?Art.Mix(p.Green,p.Text,blend*.1f):Selected?p.Soft:Nav?Art.Mix(p.Side,p.Soft,blend):Art.Mix(p.Panel,p.Hover,blend);Color ink=Primary?(p.Green.GetBrightness()>.58f?Palette.C("#22304D"):Color.White):Selected?p.Green:Nav?p.Muted:p.Text;
+    protected override void OnPaint(PaintEventArgs e){var p=Colors?.Invoke()??new Palette(false);float dpi=e.Graphics.DpiX/96f;GlassSurface.Paint(this,e.Graphics,e.ClipRectangle,Nav?p.Side:Parent?.BackColor??p.Bg);e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;var bg=Primary?Art.Mix(p.Green,p.Text,blend*.1f):Selected?p.Soft:Nav?Art.Mix(p.Side,p.Soft,blend):Art.Mix(p.Panel,p.Hover,blend);Color ink=Primary?(p.Green.GetBrightness()>.58f?Palette.C("#22304D"):Color.White):Selected?p.Green:Nav?p.Muted:p.Text;
       if(!Quiet||blend>.01f||Selected)Art.Box(e.Graphics,new RectangleF(.5f,.5f,Width-1,Height-1),bg,Nav||Primary||Quiet?(Color?)null:p.Line,9*dpi);
       if(Selected&&Nav)Art.Box(e.Graphics,new RectangleF(1,Height*.3f,3*dpi,Height*.4f),p.Green,null,2*dpi);
       float iconSize=16*dpi;bool text=Text.Length>0;if(Glyph!=null){float x=Nav&&text?17*dpi:text?15*dpi:(Width-iconSize)/2;if(Glyph=="claude"||Glyph=="chatgpt")ProviderIcons.Draw(e.Graphics,Glyph=="claude",new RectangleF(x,(Height-iconSize)/2,iconSize,iconSize),ink);else Art.Icon(e.Graphics,Glyph,x,(Height-iconSize)/2,iconSize,ink);}
@@ -27,7 +27,7 @@ namespace TokenGrove {
   public sealed class GroveSwitch:CheckBox {
     public Func<Palette> Colors;
     public GroveSwitch(string title,bool value,Action<bool> change){AccessibleName=title;Checked=value;Text="";Cursor=Cursors.Hand;SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer,true);CheckedChanged+=(s,e)=>{Invalidate();change(Checked);};}
-    protected override void OnPaint(PaintEventArgs e){var p=Colors?.Invoke()??new Palette(false);e.Graphics.Clear(Parent?.BackColor??p.Panel);e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;float h=Math.Min(24,Height-2);float y=(Height-h)/2;Art.Box(e.Graphics,new RectangleF(1,y,Width-2,h),Checked?p.Green:p.Line,null,h/2);using(var b=new SolidBrush(Checked?Color.White:p.Panel))e.Graphics.FillEllipse(b,Checked?Width-h+3:4,y+3,h-6,h-6);if(Focused&&ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,Rectangle.Inflate(ClientRectangle,-1,-1));}
+    protected override void OnPaint(PaintEventArgs e){var p=Colors?.Invoke()??new Palette(false);GlassSurface.Paint(this,e.Graphics,e.ClipRectangle,Parent?.BackColor??p.Panel);e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;float h=Math.Min(24,Height-2);float y=(Height-h)/2;Art.Box(e.Graphics,new RectangleF(1,y,Width-2,h),Checked?p.Green:p.Line,null,h/2);using(var b=new SolidBrush(Checked?Color.White:p.Panel))e.Graphics.FillEllipse(b,Checked?Width-h+3:4,y+3,h-6,h-6);if(Focused&&ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,Rectangle.Inflate(ClientRectangle,-1,-1));}
   }
   public sealed class GroveSlider:Control {
     public Func<Palette> Colors;public int Minimum=55,Maximum=100;int current=100;bool dragging;
@@ -40,7 +40,7 @@ namespace TokenGrove {
     protected override void OnMouseUp(MouseEventArgs e){base.OnMouseUp(e);dragging=false;Capture=false;}
     protected override bool IsInputKey(Keys key){return key==Keys.Left||key==Keys.Right||key==Keys.Home||key==Keys.End||base.IsInputKey(key);}
     protected override void OnKeyDown(KeyEventArgs e){base.OnKeyDown(e);if(e.KeyCode==Keys.Left)Value--;if(e.KeyCode==Keys.Right)Value++;if(e.KeyCode==Keys.Home)Value=Minimum;if(e.KeyCode==Keys.End)Value=Maximum;}
-    protected override void OnPaint(PaintEventArgs e){var p=Colors?.Invoke()??new Palette(false);e.Graphics.Clear(Parent?.BackColor??p.Panel);e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;float fraction=(Value-Minimum)/(float)Math.Max(1,Maximum-Minimum),width=Width-20;float y=Height/2;Art.Box(e.Graphics,new RectangleF(10,y-2,width,4),p.Line,null,2);if(fraction>0)Art.Box(e.Graphics,new RectangleF(10,y-2,Math.Max(4,width*fraction),4),p.Green,null,2);Art.Dot(e.Graphics,10+width*fraction-8,y-7,Color.FromArgb(24,0,0,0),17);Art.Dot(e.Graphics,10+width*fraction-7,y-7,p.Panel,14);Art.Dot(e.Graphics,10+width*fraction-4,y-4,p.Green,8);if(Focused&&ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,Rectangle.Inflate(ClientRectangle,-1,-1),p.Green,p.Panel);}
+    protected override void OnPaint(PaintEventArgs e){var p=Colors?.Invoke()??new Palette(false);GlassSurface.Paint(this,e.Graphics,e.ClipRectangle,Parent?.BackColor??p.Panel);e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;float fraction=(Value-Minimum)/(float)Math.Max(1,Maximum-Minimum),width=Width-20;float y=Height/2;Art.Box(e.Graphics,new RectangleF(10,y-2,width,4),p.Line,null,2);if(fraction>0)Art.Box(e.Graphics,new RectangleF(10,y-2,Math.Max(4,width*fraction),4),p.Green,null,2);Art.Dot(e.Graphics,10+width*fraction-8,y-7,Color.FromArgb(24,0,0,0),17);Art.Dot(e.Graphics,10+width*fraction-7,y-7,p.Panel,14);Art.Dot(e.Graphics,10+width*fraction-4,y-4,p.Green,8);if(Focused&&ShowFocusCues)ControlPaint.DrawFocusRectangle(e.Graphics,Rectangle.Inflate(ClientRectangle,-1,-1),p.Green,p.Panel);}
     protected override AccessibleObject CreateAccessibilityInstance(){return new SliderAccess(this);}
     sealed class SliderAccess:ControlAccessibleObject {
       readonly GroveSlider owner;public SliderAccess(GroveSlider control):base(control){owner=control;}
@@ -50,10 +50,11 @@ namespace TokenGrove {
     }
   }
   public sealed class GroveCombo:ComboBox {
-    public Func<Palette> Colors;
+    public Func<Palette> Colors;readonly OpaqueControlBuffer opaque=new OpaqueControlBuffer();
     public GroveCombo(){DropDownStyle=ComboBoxStyle.DropDownList;DrawMode=DrawMode.OwnerDrawFixed;FlatStyle=FlatStyle.Flat;ItemHeight=25;}
     protected override void OnDrawItem(DrawItemEventArgs e){if(e.Index<0)return;var p=Colors?.Invoke()??new Palette(false);using(var b=new SolidBrush((e.State&DrawItemState.Selected)!=0?p.Soft:p.Panel))e.Graphics.FillRectangle(b,e.Bounds);Typography.Draw(e.Graphics,Convert.ToString(Items[e.Index]),Font,new Rectangle(e.Bounds.X+9,e.Bounds.Y,e.Bounds.Width-14,e.Bounds.Height),p.Text);}
-    protected override void WndProc(ref Message m){base.WndProc(ref m);if(m.Msg!=0xF||!IsHandleCreated)return;var p=Colors?.Invoke()??new Palette(false);using(var g=Graphics.FromHwnd(Handle)){float dpi=g.DpiX/96f;float button=27*dpi;using(var b=new SolidBrush(p.Hover))g.FillRectangle(b,Width-button,1,button-1,Height-2);using(var pen=new Pen(p.Line))g.DrawRectangle(pen,.5f,.5f,Width-1,Height-1);g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;float x=Width-button/2,y=Height/2;Art.Line(g,x-3*dpi,y-1*dpi,x,y+2*dpi,p.Muted);Art.Line(g,x,y+2*dpi,x+3*dpi,y-1*dpi,p.Muted);}}
+    protected override void Dispose(bool disposing){if(disposing)opaque.Dispose();base.Dispose(disposing);}
+    protected override void WndProc(ref Message m){base.WndProc(ref m);if(m.Msg!=0xF||!IsHandleCreated)return;opaque.Paint(this);var p=Colors?.Invoke()??new Palette(false);using(var g=Graphics.FromHwnd(Handle)){float dpi=g.DpiX/96f;float button=27*dpi;using(var b=new SolidBrush(p.Hover))g.FillRectangle(b,Width-button,1,button-1,Height-2);using(var pen=new Pen(p.Line))g.DrawRectangle(pen,.5f,.5f,Width-1,Height-1);g.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;float x=Width-button/2,y=Height/2;Art.Line(g,x-3*dpi,y-1*dpi,x,y+2*dpi,p.Muted);Art.Line(g,x,y+2*dpi,x+3*dpi,y-1*dpi,p.Muted);}}
   }
   public sealed class GroveSearch:UserControl {
     public Func<Palette> Colors;readonly TextBox edit=new GroveEdit{BorderStyle=BorderStyle.None,AccessibleName="搜索模型"};
@@ -64,13 +65,13 @@ namespace TokenGrove {
     protected override void OnFontChanged(EventArgs e){base.OnFontChanged(e);if(edit!=null){edit.Font=Font;Arrange();}}
     protected override void OnResize(EventArgs e){base.OnResize(e);if(edit!=null)Arrange();}
     void Arrange(){using(var g=CreateGraphics()){float dpi=g.DpiX/96f;edit.SetBounds((int)(33*dpi),Math.Max(1,(Height-edit.PreferredHeight)/2),Math.Max(1,Width-(int)(45*dpi)),edit.PreferredHeight);}}
-    protected override void OnPaintBackground(PaintEventArgs e){using(var b=new SolidBrush(Parent?.BackColor??BackColor))e.Graphics.FillRectangle(b,e.ClipRectangle);}
+    protected override void OnPaintBackground(PaintEventArgs e){GlassSurface.Paint(this,e.Graphics,e.ClipRectangle,Parent?.BackColor??BackColor);}
     protected override void OnPaint(PaintEventArgs e){var p=Colors?.Invoke()??new Palette(false);edit.BackColor=p.Hover;edit.ForeColor=p.Text;e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;float dpi=e.Graphics.DpiX/96f;Art.Box(e.Graphics,new RectangleF(.5f,.5f,Width-1,Height-1),p.Hover,p.Line,8*dpi);Art.Icon(e.Graphics,"search",10*dpi,(Height-15*dpi)/2,15*dpi,p.Subtle);base.OnPaint(e);}
   }
   public class GrovePanel:Panel {
     public Func<Palette> Colors;public GrovePanel(){DoubleBuffered=true;SetStyle(ControlStyles.ResizeRedraw,true);}
-    protected override void OnPaintBackground(PaintEventArgs e){using(var b=new SolidBrush((Colors?.Invoke()??new Palette(false)).Panel))e.Graphics.FillRectangle(b,e.ClipRectangle);}
-    protected override void OnPaint(PaintEventArgs e){var p=Colors?.Invoke()??new Palette(false);BackColor=p.Panel;base.OnPaint(e);}
+    protected override void OnPaintBackground(PaintEventArgs e){GlassSurface.Paint(this,e.Graphics,e.ClipRectangle,(Colors?.Invoke()??new Palette(false)).Panel);}
+    protected override void OnPaint(PaintEventArgs e){base.OnPaint(e);}
   }
 }
 

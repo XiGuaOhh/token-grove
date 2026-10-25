@@ -19,13 +19,13 @@ namespace TokenGrove {
       var area=Screen.PrimaryScreen.WorkingArea;Location=C.Prefs.widgetX!=int.MinValue?new Point(C.Prefs.widgetX,C.Prefs.widgetY):new Point(area.Right-Width-24,area.Top+36);
       if(!Screen.AllScreens.Any(s=>s.WorkingArea.IntersectsWith(Bounds)))Location=new Point(area.Right-Width-24,area.Top+36);
       var current=Screen.FromRectangle(Bounds).WorkingArea;Left=Math.Max(current.Left,Math.Min(Left,current.Right-Width));Top=Math.Max(current.Top,Math.Min(Top,current.Bottom-Height));
-      tips.SetToolTip(this,"拖动移动 · 双击查看 Token 用量 · 右键打开菜单");
+      tips.SetToolTip(this,"拖动移动 · 双击返回原页面 · 右键打开菜单");
       MouseDown+=(s,e)=>{if(e.Button==MouseButtons.Left){dragOrigin=e.Location;pressed=true;dragged=false;Capture=true;}};
       MouseMove+=(s,e)=>{if(!pressed||e.Button!=MouseButtons.Left)return;int dx=e.X-dragOrigin.X,dy=e.Y-dragOrigin.Y;if(!dragged&&Math.Abs(dx)+Math.Abs(dy)<4)return;dragged=true;Left+=dx;Top+=dy;};MouseCaptureChanged+=(s,e)=>{if(!Capture)pressed=false;};
-      MouseMove+=(s,e)=>{if(pressed)return;int client=e.X<ClientSize.Width/2?0:1;if(client!=tipClient){tipClient=client;tips.SetToolTip(this,(client==0?"Claude":"ChatGPT / Codex")+" · 拖动移动 · 双击查看 Token 用量 · 右键打开菜单");}};
+      MouseMove+=(s,e)=>{if(pressed)return;int client=e.X<ClientSize.Width/2?0:1;if(client!=tipClient){tipClient=client;tips.SetToolTip(this,(client==0?"Claude":"ChatGPT / Codex")+" · 拖动移动 · 双击返回原页面 · 右键打开菜单");}};
       MouseUp+=(s,e)=>{pressed=false;Capture=false;if(e.Button==MouseButtons.Right)C.Menu?.Show(this,e.Location);if(dragged){C.Prefs.widgetX=Left;C.Prefs.widgetY=Top;C.Prefs.Save();dragged=false;}};
-      MouseDoubleClick+=(s,e)=>{if(e.Button==MouseButtons.Left){pressed=false;Capture=false;C.ShowMain("usage");}};
-      KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Return)C.ShowMain("usage");if(e.KeyCode==Keys.Escape)C.HideWidget();};PrepareSurface();
+      MouseDoubleClick+=(s,e)=>{if(e.Button==MouseButtons.Left){pressed=false;Capture=false;C.ShowMain();}};
+      KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Return)C.ShowMain();if(e.KeyCode==Keys.Escape)C.HideWidget();};PrepareSurface();
     }
     public void SnapshotChanged(Snapshot old){previous.Clear();if(old!=null)foreach(var a in old.accounts)foreach(var q in a.windows)previous[a.provider+":"+q.id]=q.usedPercent;AnimateData();UpdateDescription();}
     void UpdateDescription(){AccessibleDescription=string.Join("；",C.Data.accounts.Select(a=>a.label+"："+string.Join("，",a.windows.Where(w=>w.id=="five_hour"||w.id=="seven_day").Select(w=>w.label+"已用 "+(w.usedPercent.HasValue?w.usedPercent.Value.ToString("0.#")+"%":"未知")))));}

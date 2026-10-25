@@ -5,7 +5,7 @@ using System.Windows.Forms;
 
 namespace TokenGrove {
   public sealed class GroveScrollPanel:GrovePanel {
-    readonly Panel viewport=new Panel();readonly ContentSurface content;
+    readonly Panel viewport=new GlassContainer();readonly ContentSurface content;
     readonly Timer timer=new Timer{Interval=FramePacing.FrameMilliseconds};readonly Stopwatch watch=new Stopwatch();
     int offset,contentHeight,dragY,dragOffset;double position,target,lastFrame;bool dragging,hover,lease,arranging;
     public Control.ControlCollection ContentControls{get{return content.Controls;}}
@@ -35,8 +35,13 @@ namespace TokenGrove {
     protected override void OnMouseLeave(EventArgs e){base.OnMouseLeave(e);hover=false;Invalidate();}
     protected override void OnPaint(PaintEventArgs e){base.OnPaint(e);if(Limit>0){var p=Colors?.Invoke()??new Palette(false);Art.Box(e.Graphics,Thumb,hover||dragging?p.Muted:p.Line,null,3*Dpi);}}
     protected override void Dispose(bool disposing){if(disposing){Stop();timer.Dispose();}base.Dispose(disposing);}
+    sealed class GlassContainer:Panel {
+      public GlassContainer(){DoubleBuffered=true;}
+      protected override void OnPaintBackground(PaintEventArgs e){GlassSurface.Paint(this,e.Graphics,e.ClipRectangle,BackColor);}
+    }
     sealed class ContentSurface:Panel {
       readonly GroveScrollPanel owner;public ContentSurface(GroveScrollPanel panel){owner=panel;DoubleBuffered=true;}
+      protected override void OnPaintBackground(PaintEventArgs e){GlassSurface.Paint(this,e.Graphics,e.ClipRectangle,BackColor);}
       protected override void OnMouseWheel(MouseEventArgs e){owner.Wheel(e);base.OnMouseWheel(e);}
     }
   }

@@ -20,7 +20,7 @@ namespace TokenGrove {
     float W{get{return ClientSize.Width/scale;}}float H{get{return ClientSize.Height/scale;}}
     int RowCount{get{return result==null?0:tab==0?result.models.Count:tab==1?result.daily.Count:tab==2?result.records:0;}}
     public UsageView(GroveContext context,float dpi){
-      C=context;scale=dpi;Colors=()=>C.Colors;
+      C=context;scale=dpi;Colors=()=>C.Colors;AccessibleName="Token 用量查询";
       from=new GroveDateInput("开始时间"){Colors=()=>C.Colors,Font=Art.Font(11.5f*scale)};to=new GroveDateInput("截止时间"){Colors=()=>C.Colors,Font=Art.Font(11.5f*scale)};Controls.Add(from);Controls.Add(to);
       search=new GroveSearch{Colors=()=>C.Colors,AccessibleName="查询模型名称",Font=Art.Font(11.5f*scale)};Controls.Add(search);
       query=AddButton("查询",()=>_ = RunQuery(true),true,"search");export=AddButton("导出 CSV",Export,false,"download");

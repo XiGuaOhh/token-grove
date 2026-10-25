@@ -29,7 +29,7 @@ namespace TokenGrove {
       popup=new ToolStripDropDown{Padding=new Padding(4),BackColor=p.Panel};var host=new ToolStripControlHost(month){Margin=Padding.Empty,Padding=Padding.Empty};popup.Items.Add(host);
       month.DateSelected+=(s,e)=>{DateTime old;if(!TryValue(out old))old=DateTime.Today;Value=e.Start.Date.AddHours(old.Hour).AddMinutes(old.Minute);popup.Close();edit.Focus();};popup.Show(this,new Point(0,Height+3));
     }
-    protected override void OnPaintBackground(PaintEventArgs e){using(var b=new SolidBrush(Parent?.BackColor??BackColor))e.Graphics.FillRectangle(b,e.ClipRectangle);}
+    protected override void OnPaintBackground(PaintEventArgs e){GlassSurface.Paint(this,e.Graphics,e.ClipRectangle,Parent?.BackColor??BackColor);}
     protected override void OnPaint(PaintEventArgs e){var p=Colors?.Invoke()??new Palette(false);e.Graphics.SmoothingMode=System.Drawing.Drawing2D.SmoothingMode.AntiAlias;Art.Box(e.Graphics,new RectangleF(.5f,.5f,Width-1,Height-1),p.Hover,p.Line,8);base.OnPaint(e);}
     protected override void Dispose(bool disposing){if(disposing){popup?.Dispose();}base.Dispose(disposing);}
   }

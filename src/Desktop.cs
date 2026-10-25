@@ -24,16 +24,15 @@ namespace TokenGrove {
     readonly Timer appearanceSave=new Timer{Interval=350},systemRefresh=new Timer{Interval=120};
     bool systemDark=SystemAppearance.Dark;Palette palette;bool paletteDark;
     public bool IsDark{get{return Prefs.EffectiveDark(systemDark);}}
-    public Palette Colors{get{if(palette==null||paletteDark!=IsDark){paletteDark=IsDark;palette=new Palette(paletteDark);}return palette;}}
-    public GroveContext(string[] args){
-      Directory.CreateDirectory(Settings.Root);try{History=J.Serializer().Deserialize<List<HistoryItem>>(J.Read(Path.Combine(Settings.Root,"history.json")))??History;}catch{}
-      try{var cache=ImportExport.LoadSnapshot(Path.Combine(Settings.Root,"snapshot.json"));Data=cache;Notice="上次同步的数据 · 正在更新";}catch{}
-      Art.AnimationsEnabled=Prefs.motion&&SystemAppearance.Animations;Main=new MainWindow(this);Floating=new FloatingWindow(this);Menu=new ContextMenuStrip();BuildMenu();Tray=new NotifyIcon{Icon=icon,Text="Token Grove · 额度小站",ContextMenuStrip=Menu,Visible=true};Tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWidget();};Tray.DoubleClick+=(s,e)=>ShowMain();
-      appearanceSave.Tick+=(s,e)=>{appearanceSave.Stop();Prefs.Save();BuildMenu();};systemRefresh.Tick+=(s,e)=>{systemRefresh.Stop();var dark=SystemAppearance.Dark;Art.AnimationsEnabled=Prefs.motion&&SystemAppearance.Animations;if(systemDark!=dark){systemDark=dark;Redraw();BuildMenu();}Main.UpdateAnimation();Floating.UpdateAnimation();};SystemEvents.UserPreferenceChanged+=PreferenceChanged;
-      sync.Interval=Math.Max(60,Prefs.intervalSeconds)*1000;sync.Tick+=async(s,e)=>await Refresh();sync.Start();
-      clock.Interval=60000;clock.Tick+=(s,e)=>{if(Main.Visible&&!Main.IsDisposed)Main.Invalidate();if(Floating.Visible&&!Floating.IsDisposed)Floating.Invalidate();};clock.Start();
-      if(args.Contains("--widget")||(Prefs.widget&&!args.Contains("--dashboard")))ShowWidget();else Main.Show();_ = Refresh(true);
-      SystemEvents.PowerModeChanged+=PowerChanged;
+    public Palette Colors{get{if(palette==null||paletteDark!=IsDark){paletteDark=IsDark;palette=new Palette(paletteDark);}palette.SurfaceOpacity=Prefs.glass&&SystemAppearance.Build>=22621?Prefs.surfaceOpacity:100;return palette;}}
+    public GroveContext(string[] args,bool startServices=true){
+      Directory.CreateDirectory(Settings.Root);if(startServices){try{History=J.Serializer().Deserialize<List<HistoryItem>>(J.Read(Path.Combine(Settings.Root,"history.json")))??History;}catch{}
+      try{var cache=ImportExport.LoadSnapshot(Path.Combine(Settings.Root,"snapshot.json"));Data=cache;Notice="上次同步的数据 · 正在更新";}catch{}}
+      Art.AnimationsEnabled=Prefs.motion&&SystemAppearance.Animations;Main=new MainWindow(this);Floating=new FloatingWindow(this);Menu=new ContextMenuStrip();BuildMenu();Tray=new NotifyIcon{Icon=icon,Text="Token Grove · 额度小站",ContextMenuStrip=Menu,Visible=startServices};Tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWidget();};Tray.DoubleClick+=(s,e)=>ShowMain();
+      appearanceSave.Tick+=(s,e)=>{appearanceSave.Stop();Prefs.Save();BuildMenu();};systemRefresh.Tick+=(s,e)=>{systemRefresh.Stop();var dark=SystemAppearance.Dark;Art.AnimationsEnabled=Prefs.motion&&SystemAppearance.Animations;if(systemDark!=dark){systemDark=dark;Redraw();BuildMenu();}Main.UpdateAnimation();Floating.UpdateAnimation();};
+      sync.Interval=Math.Max(60,Prefs.intervalSeconds)*1000;sync.Tick+=async(s,e)=>await Refresh();
+      clock.Interval=60000;clock.Tick+=(s,e)=>{if(Main.Visible&&!Main.IsDisposed)Main.Invalidate();if(Floating.Visible&&!Floating.IsDisposed)Floating.Invalidate();};
+      if(startServices){SystemEvents.UserPreferenceChanged+=PreferenceChanged;SystemEvents.PowerModeChanged+=PowerChanged;sync.Start();clock.Start();if(args.Contains("--widget")||(Prefs.widget&&!args.Contains("--dashboard")))ShowWidget();else Main.Show();_ = Refresh(true);}
     }
     void PowerChanged(object sender,PowerModeChangedEventArgs e){if(e.Mode==PowerModes.Resume&&!Quitting)Main.BeginInvoke(new Action(async()=>await Refresh()));}
     public async Task Refresh(bool force=false){if(Quitting||Refreshing||Collector.Busy)return;Refreshing=true;Imported=false;Notice="正在同步 · 只读取额度与 Token";Redraw();try{
@@ -46,8 +45,9 @@ namespace TokenGrove {
     void PreferenceChanged(object sender,UserPreferenceChangedEventArgs e){QueueAppearanceRefresh();}
     public void QueueAppearanceRefresh(){if(Quitting||Main==null||!Main.IsHandleCreated||Main.IsDisposed)return;try{Main.BeginInvoke(new Action(()=>{if(!Quitting){systemRefresh.Stop();systemRefresh.Start();}}));}catch{}}
     public void SetOpacity(bool compact,int percent){if(compact)Prefs.widgetOpacity=percent;else Prefs.mainOpacity=percent;Prefs.Normalize();if(compact)Floating.ApplyAppearance();else Main.ApplyAppearance();appearanceSave.Stop();appearanceSave.Start();}
+    public void SetSurfaceOpacity(int percent){Prefs.surfaceOpacity=percent;Prefs.Normalize();Redraw();appearanceSave.Stop();appearanceSave.Start();}
     public void SetTheme(string mode){Prefs.themeMode=mode;SavePrefs();}
-    public void ShowMain(string view="overview"){Main.SetView(view);Main.Show();Main.WindowState=FormWindowState.Normal;Main.Activate();Floating.Hide();}
+    public void ShowMain(string view=null){if(view!=null)Main.SetView(view);Prefs.widget=false;Prefs.Save();Main.Show();Main.WindowState=FormWindowState.Normal;Main.Activate();Floating.Hide();}
     public void ShowWidget(){Prefs.widget=true;Prefs.Save();Main.Hide();Floating.TopMost=Prefs.topmost;Floating.Show();Floating.Activate();GC.Collect(2,GCCollectionMode.Optimized,false);}
     public void HideWidget(){Prefs.widget=false;Prefs.Save();Floating.Hide();Notice="已收入系统托盘";}
     public void SavePrefs(){Prefs.Save();Art.AnimationsEnabled=Prefs.motion&&SystemAppearance.Animations;sync.Interval=Math.Max(60,Prefs.intervalSeconds)*1000;Floating.TopMost=Prefs.topmost;Main.UpdateAnimation();Floating.UpdateAnimation();BuildMenu();Redraw();}
@@ -58,7 +58,7 @@ namespace TokenGrove {
     public void SetStartup(bool enabled){try{using(var key=Registry.CurrentUser.CreateSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run")){if(enabled)key.SetValue("TokenGrove","\""+Application.ExecutablePath+"\" --widget");else key.DeleteValue("TokenGrove",false);}Prefs.startup=enabled;SavePrefs();}catch{MessageBox.Show(Main,"无法修改开机启动设置，请检查当前账户权限。","Token Grove");}}
     public void Import(){using(var dialog=new OpenFileDialog{Filter="用量快照 (*.json)|*.json",Title="导入 Token Grove 快照"}){if(dialog.ShowDialog(Main)!=DialogResult.OK)return;try{Data=ImportExport.LoadSnapshot(dialog.FileName);Imported=true;Notice="离线快照 · 点击刷新恢复本机实时数据";Main.UpdateData();Redraw();}catch(Exception e){MessageBox.Show(Main,"快照无法导入："+e.Message,"Token Grove");}}}
     public void Detail(Account a){if(a==null)return;var text=a.label+" · "+a.Status+"\n\n数据来源："+a.source+"\n范围："+a.scope+"\n账号："+(Prefs.privacy?J.Mask(a.email):a.email)+"\n\n"+string.Join("\n",a.windows.Select(w=>w.label+"："+(w.usedPercent.HasValue?w.usedPercent.Value.ToString("0.#")+"% 已用":"未知")+"\n"+w.ResetText))+"\n\n"+a.message+"\n\n"+string.Join("\n",a.windows.Select(w=>(w.label??"额度窗口")+"预估剩余："+(w.estimate!=null&&w.estimate.Current(w,DateTime.UtcNow)?J.Tokens(w.estimate.remainingTokens)+" Token":"采样不足")))+"\n\n最近更新："+(J.Time(a.lastSyncedAt)?.ToLocalTime().ToString("MM-dd HH:mm")??"未知");MessageBox.Show(Main,text,"账号详情",MessageBoxButtons.OK,MessageBoxIcon.Information);}
-    public void About(){var p=Process.GetCurrentProcess();MessageBox.Show(Main,"Token Grove Desktop 2.5.0\nWindows 原生程序 · 无浏览器内核 · 无 Node 常驻\n\n当前工作集："+(p.WorkingSet64/1048576d).ToString("0.0")+" MB\n私有内存："+(p.PrivateMemorySize64/1048576d).ToString("0.0")+" MB\n最近同步："+(Collector.LastTiming??"等待首次同步")+"\n\n默认每 5 分钟同步，Token 日志按字节位置增量读取。\n交互结束后停止连续绘制；完全退出请使用托盘菜单。\n\nClaude 额度读取的是已有桌面/Code 授权，兼容接口可能变化；不可用时保留有时间标记的本机缓存。\nChatGPT 栏对应 Codex 订阅额度。\n所有 Token 统计仅包含本机记录。","关于额度小站");}
+    public void About(){var p=Process.GetCurrentProcess();MessageBox.Show(Main,"Token Grove Desktop 2.5.1\nWindows 原生程序 · 无浏览器内核 · 无 Node 常驻\n\n当前工作集："+(p.WorkingSet64/1048576d).ToString("0.0")+" MB\n私有内存："+(p.PrivateMemorySize64/1048576d).ToString("0.0")+" MB\n最近同步："+(Collector.LastTiming??"等待首次同步")+"\n\n默认每 5 分钟同步，Token 日志按字节位置增量读取。\n交互结束后停止连续绘制；完全退出请使用托盘菜单。\n\nClaude 额度读取的是已有桌面/Code 授权，兼容接口可能变化；不可用时保留有时间标记的本机缓存。\nChatGPT 栏对应 Codex 订阅额度。\n所有 Token 统计仅包含本机记录。","关于额度小站");}
     public void Quit(){if(Quitting)return;Quitting=true;Prefs.widgetX=Floating.Left;Prefs.widgetY=Floating.Top;Prefs.Save();sync.Stop();clock.Stop();appearanceSave.Stop();systemRefresh.Stop();Tray.Visible=false;Tray.Dispose();Main.Close();Floating.Close();SystemEvents.PowerModeChanged-=PowerChanged;SystemEvents.UserPreferenceChanged-=PreferenceChanged;ExitThread();}
     protected override void Dispose(bool disposing){if(disposing){sync.Dispose();clock.Dispose();appearanceSave.Dispose();systemRefresh.Dispose();icon.Dispose();Menu.Dispose();}base.Dispose(disposing);}
   }
