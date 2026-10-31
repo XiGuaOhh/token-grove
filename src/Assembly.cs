@@ -4,6 +4,6 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyDescription("轻量 Windows 原生账号额度与 Token 用量工作台")]
 [assembly: AssemblyProduct("Token Grove Desktop")]
 [assembly: AssemblyCompany("Token Grove")]
-[assembly: AssemblyVersion("2.6.0.0")]
-[assembly: AssemblyFileVersion("2.6.0.0")]
+[assembly: AssemblyVersion("2.6.1.0")]
+[assembly: AssemblyFileVersion("2.6.1.0")]
 [assembly: ComVisible(false)]

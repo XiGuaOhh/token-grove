@@ -107,7 +107,7 @@ namespace TokenGrove {
       }
     }
     public sealed class FileCursor {
-      public long position;public DateTime modified;public string provider,model,session;public long previousInput,previousOutput,previousCached,previousTotal;
+      public long position;public DateTime modified;public string provider,model,session;public long previousInput,previousOutput,previousCached,previousTotal;public bool hasPreviousTotal,partialHistory;
       public Dictionary<string,Record> records=new Dictionary<string,Record>();
     }
     static IEnumerable<string> Walk(string root,int depth=0){
@@ -120,11 +120,18 @@ namespace TokenGrove {
       var id=J.Str(J.Get(message,"id"));r.key="claude:"+J.Str(J.Get(item,"sessionId"))+":"+(id.Length>0?id:J.Str(J.Get(item,"uuid")));if(r.key.EndsWith(":"))r.key+=r.time.Ticks+":"+r.total;return r.total>0?r:null;
     }
     public static Record CodexRecord(object item,FileCursor c){
-      var type=J.Str(J.Get(item,"type"));var payload=J.Get(item,"payload");if(type=="session_meta"){c.session=J.Str(J.Get(payload,"id"));return null;}if(type=="turn_context"){c.model=J.Str(J.Get(payload,"model"));return null;}if(type!="event_msg"||J.Str(J.Get(payload,"type"))!="token_count")return null;
+      var type=J.Str(J.Get(item,"type"));var payload=J.Get(item,"payload");if(type=="session_meta"){var session=J.Str(J.Get(payload,"id"));if(session.Length>0&&session!=c.session){c.session=session;c.hasPreviousTotal=false;}c.partialHistory=J.Get(payload,"history_base")!=null||J.Str(J.Get(payload,"history_mode"))=="paginated";return null;}if(type=="turn_context"){c.model=J.Str(J.Get(payload,"model"));return null;}if(type!="event_msg"||J.Str(J.Get(payload,"type"))!="token_count")return null;
       var info=J.Get(payload,"info");var total=J.Get(info,"total_token_usage");var last=J.Get(info,"last_token_usage");if(total==null&&last==null)return null;var time=J.Time(J.Get(item,"timestamp"));if(!time.HasValue)return null;
       var data=total??last;long input=J.Count(J.Get(data,"input_tokens")),output=J.Count(J.Get(data,"output_tokens")),cached=J.Count(J.Get(data,"cached_input_tokens"));long count=J.Get(data,"total_tokens")==null?input+output:J.Count(J.Get(data,"total_tokens"));
       var r=new Record{provider="chatgpt",model=string.IsNullOrEmpty(c.model)?"Codex · 未标记模型":c.model,time=time.Value};
-      if(total!=null){bool reset=count<c.previousTotal;r.input=Math.Max(0,input-(reset?0:c.previousInput));r.output=Math.Max(0,output-(reset?0:c.previousOutput));r.cached=Math.Max(0,cached-(reset?0:c.previousCached));r.total=Math.Max(0,count-(reset?0:c.previousTotal));c.previousInput=input;c.previousOutput=output;c.previousCached=cached;c.previousTotal=count;}else{r.input=input;r.output=output;r.cached=cached;r.total=count;}
+      if(total!=null){
+        bool boundary=!c.hasPreviousTotal||count<c.previousTotal;
+        // Paginated/resumed histories carry older cumulative usage into a new file.
+        // At a counter boundary only last_token_usage identifies a new request.
+        if(boundary&&last!=null){r.input=J.Count(J.Get(last,"input_tokens"));r.output=J.Count(J.Get(last,"output_tokens"));r.cached=J.Count(J.Get(last,"cached_input_tokens"));r.total=J.Get(last,"total_tokens")==null?r.input+r.output:J.Count(J.Get(last,"total_tokens"));}
+        else if(!boundary||!c.partialHistory){r.input=Math.Max(0,input-(boundary?0:c.previousInput));r.output=Math.Max(0,output-(boundary?0:c.previousOutput));r.cached=Math.Max(0,cached-(boundary?0:c.previousCached));r.total=Math.Max(0,count-(boundary?0:c.previousTotal));}
+        c.previousInput=input;c.previousOutput=output;c.previousCached=cached;c.previousTotal=count;c.hasPreviousTotal=true;
+      }else{r.input=input;r.output=output;r.cached=cached;r.total=count;}
       r.key="codex:"+c.session+":"+time.Value.Ticks+":"+count;return r.total>0?r:null;
     }
     void ProcessLine(FileCursor c,string line){
