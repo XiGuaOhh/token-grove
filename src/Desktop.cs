@@ -27,7 +27,7 @@ namespace TokenGrove {
     public bool IsDark{get{return Prefs.EffectiveDark(systemDark);}}
     public Palette Colors{get{if(palette==null||paletteDark!=IsDark){paletteDark=IsDark;palette=new Palette(paletteDark);}palette.SurfaceOpacity=Prefs.glass&&SystemAppearance.Build>=22621?Prefs.surfaceOpacity:100;return palette;}}
     public GroveContext(string[] args,bool startServices=true){
-      servicesEnabled=startServices;Directory.CreateDirectory(Settings.Root);string planFile=Path.Combine(Settings.Root,"plans.json");Plans=startServices?WorkPlanStore.Open(planFile):new WorkPlanStore(planFile);if(startServices){try{History=J.Serializer().Deserialize<List<HistoryItem>>(J.Read(Path.Combine(Settings.Root,"history.json")))??History;}catch{}
+      servicesEnabled=startServices;Directory.CreateDirectory(Settings.Root);string planFile=Path.Combine(Settings.Root,"plans.json");Plans=startServices?PlanStorage.OpenDefault():new WorkPlanStore(planFile);if(startServices){try{History=J.Serializer().Deserialize<List<HistoryItem>>(J.Read(Path.Combine(Settings.Root,"history.json")))??History;}catch{}
       try{var cache=ImportExport.LoadSnapshot(Path.Combine(Settings.Root,"snapshot.json"));Data=cache;Notice="上次同步的数据 · 正在更新";}catch{}}
       InitializeUpdates();Art.AnimationsEnabled=Prefs.motion&&SystemAppearance.Animations;Main=new MainWindow(this);Floating=new FloatingWindow(this);Menu=new ContextMenuStrip();BuildMenu();Tray=new NotifyIcon{Icon=icon,Text="Token Grove · 额度小站",ContextMenuStrip=Menu,Visible=startServices};Tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWidget();};Tray.DoubleClick+=(s,e)=>ShowMain();
       Tray.BalloonTipClicked+=(s,e)=>{ShowMain("plans");Main.FocusReadyPlan();};

@@ -36,6 +36,31 @@ namespace TokenGrove {
       var broken=Path.Combine(root,"plans","broken.json");File.WriteAllText(broken,"{unfinished");var protectedStore=WorkPlanStore.Open(broken);bool blocked=false;try{protectedStore.Save();}catch(IOException){blocked=true;}
       check(!protectedStore.CanWrite&&blocked&&File.ReadAllText(broken)=="{unfinished","An unreadable plan file is protected from empty-list overwrites");
       var settings=new Settings{mainView="plans"};settings.Normalize();check(settings.mainView=="plans","The plans page is a valid remembered startup page");
+      SharedStorage(root,now,check);
+    }
+    static void SharedStorage(string root,DateTime now,Action<bool,string> check){
+      string shared=Path.Combine(root,"shared-plans"),firstFile=Path.Combine(root,"virtual-appdata","plans.json"),secondFile=Path.Combine(root,"real-appdata","plans.json");
+      var first=new WorkPlanStore(firstFile);var a=first.Create("claude",null,now);a.title="从开发工具启动时写的计划";first.Save();
+      var second=new WorkPlanStore(secondFile);var b=second.Create("chatgpt",null,now);b.title="双击启动时写的计划";second.Save();
+      var merged=PlanStorage.Open(shared,new[]{firstFile,secondFile});
+      check(merged.CanWrite&&merged.Items.Count==2&&merged.Items.Any(p=>p.id==a.id)&&merged.Items.Any(p=>p.id==b.id),"Different launch environments merge both legacy plan lists into one shared store");
+      merged.Items.Single(p=>p.id==a.id).body="两种启动方式都能读到的新内容";merged.Save();
+      var restarted=PlanStorage.Open(shared,new[]{secondFile,firstFile});
+      check(restarted.Items.Count==2&&restarted.Items.Single(p=>p.id==a.id).body.Contains("新内容"),"Restarting from another launch environment reads the same edited shared plans");
+      restarted.Items.RemoveAll(p=>p.id==a.id);restarted.Save();
+      check(PlanStorage.Open(shared,new[]{firstFile,secondFile}).Items.Count==1,"Completed migration never resurrects a deliberately deleted plan from old files");
+      check(WorkPlanStore.Open(firstFile).Items.Count==1&&WorkPlanStore.Open(secondFile).Items.Count==1,"Migration preserves both original legacy documents");
+      var conflictRoot=Path.Combine(root,"shared-conflict");var conflict=new WorkPlanStore(Path.Combine(root,"conflict","plans.json"));
+      var altered=J.Serializer().Deserialize<WorkPlan>(J.Serializer().Serialize(a));altered.body="另一份编辑内容";conflict.Items.Add(altered);conflict.Save();
+      var conflicts=PlanStorage.Open(conflictRoot,new[]{firstFile,conflict.FilePath});
+      check(conflicts.Items.Count==2&&conflicts.Items.Select(p=>p.id).Distinct().Count()==2&&conflicts.Items.Any(p=>p.body=="另一份编辑内容"),"Conflicting edits with the same plan ID retain both versions without overwriting text");
+      check(PlanStorage.Open(conflictRoot,new[]{conflict.FilePath,firstFile}).Items.Count==2,"Restarting does not duplicate migrated conflict copies");
+      string corrupt=Path.Combine(root,"corrupt-legacy.json");File.WriteAllText(corrupt,"{unfinished");
+      var intact=PlanStorage.Open(Path.Combine(root,"shared-corrupt"),new[]{corrupt,secondFile});
+      check(intact.CanWrite&&intact.Items.Count==1&&File.ReadAllText(corrupt)=="{unfinished","A corrupt legacy file stays untouched while valid plans migrate safely");
+      string protectedRoot=Path.Combine(root,"shared-protected");Directory.CreateDirectory(protectedRoot);File.WriteAllText(Path.Combine(protectedRoot,"plans.json"),"{unfinished");
+      var blocked=PlanStorage.Open(protectedRoot,new[]{secondFile});check(!blocked.CanWrite&&File.ReadAllText(blocked.FilePath)=="{unfinished","A corrupt shared document is never overwritten by migration");
+      check(!PlanStorage.SharedRoot.StartsWith(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),StringComparison.OrdinalIgnoreCase),"Shared plan storage is outside the AppData location Windows virtualizes by launcher");
     }
   }
 }

@@ -14,9 +14,11 @@ namespace TokenGrove {
     [ScriptIgnore]public string Client{get{return provider=="claude"?"Claude":"Codex";}}
     public string Prompt(){return string.IsNullOrWhiteSpace(body)?title:(title+Environment.NewLine+Environment.NewLine+body);}
   }
-  public sealed class PlanDocument {public int version=1;public List<WorkPlan> plans=new List<WorkPlan>();}
+  public sealed class PlanDocument {public int version=1;public List<WorkPlan> plans=new List<WorkPlan>();public List<string> importedSources=new List<string>();}
   public sealed class WorkPlanStore {
     public readonly string FilePath;public readonly List<WorkPlan> Items=new List<WorkPlan>();
+    internal readonly List<string> ImportedSources=new List<string>();
+    public string MigrationWarning{get;internal set;}
     public string LoadError{get;private set;}
     public bool CanWrite{get{return LoadError==null;}}
     public int ReadyCount{get{return Items.Count(p=>p.Ready);}}
@@ -27,6 +29,7 @@ namespace TokenGrove {
         if(new FileInfo(path).Length>64*1024*1024)throw new InvalidDataException();
         var document=J.Serializer().Deserialize<PlanDocument>(J.Read(path));
         if(document==null||document.version!=1)throw new InvalidDataException();Validate(document.plans);store.Items.AddRange(document.plans);
+        if(document.importedSources!=null){if(document.importedSources.Count>256||document.importedSources.Any(s=>string.IsNullOrEmpty(s)||s.Length>32768))throw new InvalidDataException();store.ImportedSources.AddRange(document.importedSources);}
       }catch{store.LoadError="计划文件读取失败，原文件已保留。请检查数据目录中的 plans.json 或备份。";}
       return store;
     }
@@ -44,7 +47,7 @@ namespace TokenGrove {
       var directory=Path.GetDirectoryName(FilePath);Directory.CreateDirectory(directory);
       string temp=Path.Combine(directory,Path.GetFileName(FilePath)+"."+Guid.NewGuid().ToString("N")+".tmp");
       try{
-        File.WriteAllText(temp,J.Serializer().Serialize(new PlanDocument{plans=Items}),new UTF8Encoding(false));
+        File.WriteAllText(temp,J.Serializer().Serialize(new PlanDocument{plans=Items,importedSources=ImportedSources}),new UTF8Encoding(false));
         if(File.Exists(FilePath))File.Replace(temp,FilePath,FilePath+".bak",true);else File.Move(temp,FilePath);
       }finally{if(File.Exists(temp))File.Delete(temp);}
     }

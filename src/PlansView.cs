@@ -73,7 +73,7 @@ namespace TokenGrove {
     public void RefreshData(){
       if(list==null)return;var rows=C.Plans.Items.Where(p=>p.Completed==showCompleted).OrderByDescending(p=>p.Ready).ThenByDescending(p=>J.Time(p.updatedUtc)).ToList();list.SetItems(rows);
       if(selected==null||!rows.Contains(selected)){if(!dirty)SelectPlan(rows.FirstOrDefault());}else{list.SelectedId=selected.id;list.Invalidate();}
-      if(C.Plans.LoadError!=null)notice=C.Plans.LoadError;LayoutContent();Invalidate();
+      if(C.Plans.LoadError!=null)notice=C.Plans.LoadError;else if(C.Plans.MigrationWarning!=null)notice=C.Plans.MigrationWarning;LayoutContent();Invalidate();
     }
     void CopyPlan(){if(selected==null)return;try{var text=string.IsNullOrWhiteSpace(title.Text)?"未命名计划":title.Text.Trim();if(!string.IsNullOrWhiteSpace(body.Text))text+=Environment.NewLine+Environment.NewLine+body.Text;Clipboard.SetText(text);notice="已复制，可以粘贴到 "+(client.SelectedIndex==1?"Codex":"Claude")+"。";}catch{notice="剪贴板暂不可用，请稍后重试。";}Invalidate();}
     void ToggleCompleted(){
