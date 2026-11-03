@@ -63,7 +63,7 @@ namespace TokenGrove {
     public string key,model,provider;public DateTime time;public long input,output,cached,write,total;
   }
   public class Settings {
-    public bool dark=false,widget=true,topmost=true,motion=true,eco=true,privacy=true,startup=false,glass=true;
+    public bool dark=false,widget=true,topmost=true,motion=true,eco=true,privacy=true,startup=false,glass=true,autoUpdateCheck=true;
     public string themeMode="system",mainView="overview";
     public int widgetOpacity=96,mainOpacity=100,surfaceOpacity=78;
     public int intervalSeconds=300,threshold=80,widgetX=int.MinValue,widgetY=int.MinValue;

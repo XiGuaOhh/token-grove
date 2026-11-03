@@ -32,7 +32,7 @@ namespace TokenGrove {
     protected override void OnSoftClose(){C.HideWidget();}
     protected override void PaintSurface(Graphics g){var p=C.Colors;if(GlassActive){using(var border=new Pen(p.Line))using(var path=Art.Round(new RectangleF(.5f,.5f,W-1,ClientSize.Height/Scale-1),12))g.DrawPath(border,path);}else Art.Box(g,new RectangleF(.5f,.5f,W-1,ClientSize.Height/Scale-1),p.Panel,p.Line,12);
       float column=(W-46)/2;Art.Line(g,W/2,13,W/2,103,p.Line);
-      Client(g,p,C.Data.accounts.FirstOrDefault(a=>a.provider=="claude"),true,14,column);Client(g,p,C.Data.accounts.FirstOrDefault(a=>a.provider=="chatgpt"),false,32+column,column);
+      Client(g,p,C.Data.accounts.FirstOrDefault(a=>a.provider=="claude"),true,14,column);Client(g,p,C.Data.accounts.FirstOrDefault(a=>a.provider=="chatgpt"),false,32+column,column);if(C.Updates.Available)Art.Dot(g,W-13,8,p.Warning,5);
     }
     void Client(Graphics g,Palette p,Account a,bool claude,float x,float width){ProviderIcons.Draw(g,claude,new RectangleF(x+(width-23)/2,9,23,23),claude?p.Coral:p.Green);Cell(g,p,a,a?.Five,"5 小时",x,40,width);Cell(g,p,a,a?.Week,"每周",x,78,width);}
     void Cell(Graphics g,Palette p,Account a,WindowQuota q,string label,float x,float y,float width){double? value=q?.usedPercent,before;Art.Text(g,label,x,y+1,10.5f,p.Muted);Art.Text(g,value.HasValue?value.Value.ToString("0.#")+"%":"—",x,y-1,14,p.Text,true,width,StringAlignment.Far);if(value.HasValue&&a!=null&&previous.TryGetValue(a.provider+":"+q.id,out before)&&before.HasValue)value=before.Value+(value.Value-before.Value)*DataBlend;

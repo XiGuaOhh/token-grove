@@ -51,6 +51,13 @@ namespace TokenGrove {
           check(plans.Flush()&&WorkPlanStore.Open(c.Plans.FilePath).Items[0].body.Contains("具体要求"),"Plan editor changes are saved as a local durable document");
           c.ShowWidget();DoubleClick(c.Floating);check(View(c.Main)=="plans"&&planBody.Text.Contains("具体要求"),"The widget restores the plans page without losing its editor contents");
           c.Main.SetView("settings");var settings=c.Main.Controls.OfType<GroveScrollPanel>().Single();
+          var updates=settings.ContentControls.OfType<UpdateView>().Single();
+          check(updates.Controls.OfType<GroveButton>().Any(b=>b.AccessibleName=="检查软件更新")&&c.Menu.Items.Cast<ToolStripItem>().Any(i=>i.Text=="检查软件更新…"),"Settings and the floating-window menu expose the software update check");
+          var automatic=settings.ContentControls.OfType<GroveSwitch>().Single(s=>s.AccessibleName=="自动检查更新");bool defaultAutomatic=automatic.Checked;automatic.Checked=false;
+          check(defaultAutomatic&&!Settings.Load().autoUpdateCheck,"Automatic update checking defaults on and can be disabled persistently");automatic.Checked=true;
+          typeof(AppUpdates).GetProperty("Latest").SetValue(c.Updates,AppUpdates.ParseRelease(UpdateRegressionTests.Manifest()),null);c.Main.RefreshUpdates();
+          check(c.Main.Controls.OfType<GroveButton>().Single(b=>b.AccessibleName=="设置").Alert&&updates.Controls.OfType<GroveButton>().Single(b=>b.AccessibleName=="下载新版压缩包").Visible,"An available release displays a settings badge and an in-app package download action");
+          typeof(AppUpdates).GetProperty("Latest").SetValue(c.Updates,null,null);c.Main.RefreshUpdates();
           check(settings.Region!=null&&!settings.Region.IsVisible(1,1)&&settings.Region.IsVisible(settings.Width/2,2),"Settings content clips its children to matching rounded corners");
           int savedWidth=settings.Width;settings.Width+=32;check(!settings.Region.IsVisible(settings.Width-1,1)&&settings.Region.IsVisible(settings.Width-2,settings.Height/2),"Surface corner clipping follows resized content bounds");settings.Width=savedWidth;
           typeof(Control).GetMethod("OnKeyDown",Hidden).Invoke(settings,new object[]{new KeyEventArgs(Keys.End)});
