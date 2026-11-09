@@ -28,7 +28,7 @@ namespace TokenGrove {
     public Palette Colors{get{if(palette==null||paletteDark!=IsDark){paletteDark=IsDark;palette=new Palette(paletteDark);}palette.SurfaceOpacity=Prefs.glass&&SystemAppearance.Build>=22621?Prefs.surfaceOpacity:100;return palette;}}
     public GroveContext(string[] args,bool startServices=true){
       servicesEnabled=startServices;Directory.CreateDirectory(Settings.Root);string planFile=Path.Combine(Settings.Root,"plans.json");Plans=startServices?PlanStorage.OpenDefault():new WorkPlanStore(planFile);if(startServices){try{History=J.Serializer().Deserialize<List<HistoryItem>>(J.Read(Path.Combine(Settings.Root,"history.json")))??History;}catch{}
-      try{var cache=ImportExport.LoadSnapshot(Path.Combine(Settings.Root,"snapshot.json"));Data=cache;Notice="上次同步的数据 · 正在更新";}catch{}}
+      try{Data=ImportExport.LoadLocalCache(Path.Combine(Settings.Root,"snapshot.json"));Notice="上次同步的数据 · 正在更新";}catch{}}
       InitializeUpdates();Art.AnimationsEnabled=Prefs.motion&&SystemAppearance.Animations;Main=new MainWindow(this);Floating=new FloatingWindow(this);Menu=new ContextMenuStrip();BuildMenu();Tray=new NotifyIcon{Icon=icon,Text="Token Grove · 额度小站",ContextMenuStrip=Menu,Visible=startServices};Tray.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)ShowWidget();};Tray.DoubleClick+=(s,e)=>ShowMain();
       Tray.BalloonTipClicked+=(s,e)=>{ShowMain("plans");Main.FocusReadyPlan();};
       appearanceSave.Tick+=(s,e)=>{appearanceSave.Stop();Prefs.Save();BuildMenu();};systemRefresh.Tick+=(s,e)=>{systemRefresh.Stop();var dark=SystemAppearance.Dark;Art.AnimationsEnabled=Prefs.motion&&SystemAppearance.Animations;if(systemDark!=dark){systemDark=dark;Redraw();BuildMenu();}Main.UpdateAnimation();Floating.UpdateAnimation();};
@@ -72,6 +72,21 @@ namespace TokenGrove {
     public static void ExportRecords(IWin32Window owner,List<Record> rows,UsageResult usage){using(var dialog=new SaveFileDialog{Filter="CSV 用量记录|*.csv",FileName="token-grove-records-"+usage.fromUtc.ToLocalTime().ToString("yyyyMMdd-HHmm")+".csv"}){if(dialog.ShowDialog(owner)!=DialogResult.OK)return;var csv=new StringBuilder("时间UTC,客户端,模型,输入Token,输出Token,读取缓存,写入缓存,总Token\r\n");foreach(var r in rows)csv.AppendLine(string.Join(",",new object[]{J.Iso(r.time),r.provider=="claude"?"Claude":"Codex",r.model,r.input,r.output,r.cached,r.write,r.total}.Select(Cell)));File.WriteAllText(dialog.FileName,csv.ToString(),new UTF8Encoding(true));}}
     static void ValidateUsage(WindowTokenUsage u){if(u==null)return;if(u.state!="ready"&&u.state!="unknown_window"&&u.state!="expired")throw new InvalidDataException("窗口 Token 状态无效");if(u.records<0||u.usedTokens.HasValue&&(u.usedTokens<0||u.usedTokens>9007199254740991L))throw new InvalidDataException("窗口 Token 数量无效");foreach(var text in new[]{u.startUtc,u.endUtc,u.measuredThroughUtc})if(text!=null&&!J.Time(text).HasValue)throw new InvalidDataException("窗口 Token 时间无效");if(u.state=="ready"){var start=J.Time(u.startUtc);var end=J.Time(u.endUtc);var through=J.Time(u.measuredThroughUtc);if(!u.usedTokens.HasValue||!start.HasValue||!end.HasValue||!through.HasValue||end<=start||through<start||through>=end)throw new InvalidDataException("窗口 Token 时间范围无效");}else if(u.usedTokens.HasValue)throw new InvalidDataException("未知窗口不能包含确定的 Token 数量");}
     public static void ExportUsage(IWin32Window owner,UsageResult usage,bool daily){using(var dialog=new SaveFileDialog{Filter="CSV 用量明细|*.csv",FileName="token-grove-range-"+usage.fromUtc.ToLocalTime().ToString("yyyyMMdd-HHmm")+".csv"}){if(dialog.ShowDialog(owner)!=DialogResult.OK)return;var csv=new StringBuilder();if(daily){csv.AppendLine("开始UTC,截止UTC,日期,Claude Token,ChatGPT Token,总Token");foreach(var d in usage.daily)csv.AppendLine(string.Join(",",new object[]{J.Iso(usage.fromUtc),J.Iso(usage.toUtc),d.date,d.claude,d.chatgpt,d.claude+d.chatgpt}.Select(Cell)));}else{csv.AppendLine("开始UTC,截止UTC,提供方,模型,输入Token,输出Token,读取缓存,写入缓存,总Token");foreach(var m in usage.models)csv.AppendLine(string.Join(",",new object[]{J.Iso(usage.fromUtc),J.Iso(usage.toUtc),m.provider,m.name,m.inputTokens,m.outputTokens,m.cachedTokens,m.cacheWriteTokens,m.totalTokens}.Select(Cell)));}File.WriteAllText(dialog.FileName,csv.ToString(),new UTF8Encoding(true));}}
+    internal static Snapshot LoadLocalCache(string path) {
+      var snapshot = LoadSnapshot(path);
+      if (snapshot.usageRevision == Snapshot.CurrentUsageRevision) return snapshot;
+      // Keep the service's quota reading but rebuild totals made by an older parser.
+      snapshot.models.Clear();
+      snapshot.daily.Clear();
+      foreach (var account in snapshot.accounts) {
+        account.estimate = account.weekEstimate = null;
+        foreach (var window in account.windows) {
+          window.localUsage = null;
+          window.estimate = null;
+        }
+      }
+      return snapshot;
+    }
     public static Snapshot LoadSnapshot(string path){
       if(new FileInfo(path).Length>5*1024*1024)throw new InvalidDataException("文件不能超过 5 MB");var obj=J.Parse(J.Read(path).TrimStart('\ufeff'));if(J.Num(J.Get(obj,"version"))!=1)throw new InvalidDataException("需要 version 1 的 Token Grove 快照");
       // The original browser export could contain fractional estimate samples.

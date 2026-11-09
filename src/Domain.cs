@@ -32,7 +32,23 @@ namespace TokenGrove {
     public Estimate estimate;
     [ScriptIgnore] public string EstimateText{get{return estimate!=null&&estimate.Current(this,DateTime.UtcNow)?J.Tokens(estimate.remainingTokens):"—";}}
     [ScriptIgnore] public bool Expired {get{return J.Time(resetsAt).HasValue&&J.Time(resetsAt).Value<=DateTime.UtcNow;}}
-    [ScriptIgnore] public string TokenText{get{return Expired?"等待更新":localUsage?.usedTokens!=null?J.Tokens(localUsage.usedTokens.Value):"窗口未知";}}
+    [ScriptIgnore] public double? DisplayPercent => Expired ? null : usedPercent;
+    [ScriptIgnore] public string TokenText {
+      get {
+        if (Expired) return "等待更新";
+        if (localUsage?.usedTokens != null) return J.Tokens(localUsage.usedTokens.Value);
+        return localUsage == null && windowMinutes > 0 && J.Time(resetsAt).HasValue ? "待统计" : "窗口未知";
+      }
+    }
+    internal string DescribeLocalUsage() {
+      if (Expired) return "额度窗口已结束，等待更新。";
+      if (localUsage?.usedTokens == null) return localUsage?.note ?? ("本机用量 · " + TokenText);
+      string start = J.Time(localUsage.startUtc)?.ToLocalTime().ToString("MM/dd HH:mm");
+      string end = J.Time(localUsage.endUtc)?.ToLocalTime().ToString("MM/dd HH:mm");
+      string through = J.Time(localUsage.measuredThroughUtc)?.ToLocalTime().ToString("MM/dd HH:mm");
+      return "本机日志 " + localUsage.usedTokens.Value.ToString("N0") + " Token（含缓存）\n" +
+        "额度窗口 " + start + " 至 " + end + "\n" + "本机统计截至 " + through;
+    }
     [ScriptIgnore] public string ResetText {get{var t=J.Time(resetsAt);if(!t.HasValue)return "重置时间未提供";var d=t.Value-DateTime.UtcNow;if(d.TotalSeconds<=0)return "等待官方额度更新";if(d.TotalDays>=1)return (int)d.TotalDays+" 天 "+d.Hours+" 小时后重置";return (int)d.TotalHours+" 小时 "+d.Minutes.ToString("00")+" 分后重置";}}
   }
   public class Estimate {public long remainingTokens,sampleTokens;public double sampleUsedPercent;public string note,windowId,startUtc,endUtc,measuredAt;
@@ -51,7 +67,9 @@ namespace TokenGrove {
   public class ModelUsage {public string id,name,provider;public long inputTokens,outputTokens,cachedTokens,cacheWriteTokens,totalTokens;}
   public class DayUsage {public string date;public long claude,chatgpt;}
   public class Snapshot {
+    public const int CurrentUsageRevision = 1;
     public int version=1,periodDays=30;
+    public int usageRevision;
     public string mode="local",updatedAt,coverage;
     public List<Account> accounts=new List<Account>();
     public List<ModelUsage> models=new List<ModelUsage>();
@@ -61,6 +79,7 @@ namespace TokenGrove {
   }
   public class Record {
     public string key,model,provider;public DateTime time;public long input,output,cached,write,total;
+    internal bool claudeResponseComplete;
   }
   public class Settings {
     public bool dark=false,widget=true,topmost=true,motion=true,eco=true,privacy=true,startup=false,glass=true,autoUpdateCheck=true;

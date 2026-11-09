@@ -39,12 +39,43 @@ namespace TokenGrove {
     static bool Matches(Record row,DateTime from,DateTime to,string provider,string model){return row.time>=from&&row.time<to&&(string.IsNullOrEmpty(provider)||row.provider==provider)&&(string.IsNullOrWhiteSpace(model)||(row.model??"").IndexOf(model,StringComparison.OrdinalIgnoreCase)>=0);}
     // The collector publishes an immutable array ordered by time. Only one page is retained by the view.
     public static List<Record> Page(Record[] orderedRecords,DateTime from,DateTime to,string provider,string model,int skip,int take){from=Utc(from);to=Utc(to);var page=new List<Record>(Math.Max(0,take));if(take<=0)return page;int low=0,high=orderedRecords.Length;while(low<high){int mid=low+(high-low)/2;if(orderedRecords[mid].time<to)low=mid+1;else high=mid;}for(int i=low-1;i>=0;i--){var row=orderedRecords[i];if(row.time<from)break;if(!Matches(row,from,to,provider,model))continue;if(skip>0){skip--;continue;}page.Add(row);if(page.Count==take)break;}return page;}
-    public static WindowTokenUsage ForWindow(string provider,WindowQuota window,IEnumerable<Record> records,DateTime now){
-      now=Utc(now);var result=new WindowTokenUsage{state="unknown_window",note="服务商未提供窗口时间，可在下方查询近 5 小时或近 7 天。"};
-      if(window==null||!window.windowMinutes.HasValue||window.windowMinutes<=0||window.windowMinutes>525600)return result;
-      var end=J.Time(window.resetsAt);if(!end.HasValue)return result;if(end.Value<=now){result.state="expired";result.note="额度窗口已结束，等待新的重置时间。";return result;}
-      DateTime start;try{start=end.Value.AddMinutes(-window.windowMinutes.Value);}catch{return result;}if(start>now)return result;
-      long tokens=0;int count=0;foreach(var row in records)if(row.provider==provider&&row.time>=start&&row.time<now){tokens+=row.total;count++;}result.state="ready";result.startUtc=J.Iso(start);result.endUtc=J.Iso(end.Value);result.measuredThroughUtc=J.Iso(now);result.usedTokens=tokens;result.records=count;result.note="按服务商窗口时间统计的本机 Token；不含网页端或其他设备。";return result;
+    public static WindowTokenUsage ForWindow(string provider, WindowQuota window, IEnumerable<Record> records, DateTime now) {
+      now = Utc(now);
+      var result = new WindowTokenUsage { state = "unknown_window", note = "服务商未提供窗口时间，可查询近 5 小时或近 7 天的本机日志。" };
+      if (window == null || !window.windowMinutes.HasValue || window.windowMinutes <= 0 || window.windowMinutes > 525600) return result;
+      var end = J.Time(window.resetsAt);
+      if (!end.HasValue) return result;
+      if (end.Value <= now) {
+        result.state = "expired";
+        result.note = "额度窗口已结束，等待新的重置时间。";
+        return result;
+      }
+      DateTime start;
+      try { start = end.Value.AddMinutes(-window.windowMinutes.Value); }
+      catch (ArgumentOutOfRangeException) { return result; }
+      if (start > now) return result;
+
+      string modelPrefix = null;
+      if (provider == "claude") {
+        if (window.id == "seven_day_opus") modelPrefix = "claude-opus-";
+        if (window.id == "seven_day_sonnet") modelPrefix = "claude-sonnet-";
+      }
+      long tokens = 0;
+      int count = 0;
+      foreach (var row in records) {
+        if (row.provider != provider || row.time < start || row.time >= now) continue;
+        if (modelPrefix != null && !(row.model ?? "").StartsWith(modelPrefix, StringComparison.OrdinalIgnoreCase)) continue;
+        tokens += row.total;
+        count++;
+      }
+      result.state = "ready";
+      result.startUtc = J.Iso(start);
+      result.endUtc = J.Iso(end.Value);
+      result.measuredThroughUtc = J.Iso(now);
+      result.usedTokens = tokens;
+      result.records = count;
+      result.note = "按服务商额度窗口统计本机日志中的 Token，包含缓存。";
+      return result;
     }
   }
 }

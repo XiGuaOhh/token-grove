@@ -109,15 +109,57 @@ namespace TokenGrove {
     public sealed class FileCursor {
       public long position;public DateTime modified;public string provider,model,session;public long previousInput,previousOutput,previousCached,previousTotal;public bool hasPreviousTotal,partialHistory;
       public Dictionary<string,Record> records=new Dictionary<string,Record>();
+      internal long scannedLength;
+      internal ulong tailFingerprint;
     }
     static IEnumerable<string> Walk(string root,int depth=0){
       if(depth>10||!Directory.Exists(root))yield break;string[] direct,dirs;try{direct=Directory.GetFiles(root,"*.jsonl");dirs=Directory.GetDirectories(root);}catch{yield break;}
       foreach(var file in direct)yield return file;foreach(var dir in dirs){FileAttributes attr;try{attr=File.GetAttributes(dir);}catch{continue;}if((attr&FileAttributes.ReparsePoint)!=0)continue;foreach(var file in Walk(dir,depth+1))yield return file;}
     }
-    public static Record ClaudeRecord(object item){
-      if(J.Str(J.Get(item,"type"))!="assistant")return null;var message=J.Get(item,"message");var usage=J.Get(message,"usage");if(usage==null)return null;var time=J.Time(J.Get(item,"timestamp"));if(!time.HasValue)return null;
-      var r=new Record{provider="claude",time=time.Value,model=J.Str(J.Get(message,"model")),input=J.Count(J.Get(usage,"input_tokens")),output=J.Count(J.Get(usage,"output_tokens")),cached=J.Count(J.Get(usage,"cache_read_input_tokens")),write=J.Count(J.Get(usage,"cache_creation_input_tokens"))};r.total=r.input+r.output+r.cached+r.write;
-      var id=J.Str(J.Get(message,"id"));r.key="claude:"+J.Str(J.Get(item,"sessionId"))+":"+(id.Length>0?id:J.Str(J.Get(item,"uuid")));if(r.key.EndsWith(":"))r.key+=r.time.Ticks+":"+r.total;return r.total>0?r:null;
+    public static Record ClaudeRecord(object item) {
+      if (J.Get(item, "type") as string != "assistant") return null;
+      var message = J.Get(item, "message");
+      var usage = J.Get(message, "usage");
+      var time = J.Time(J.Get(item, "timestamp"));
+      if (usage == null || !time.HasValue) return null;
+
+      // A branch or a copied transcript can assign the same API response a new session ID.
+      string messageId = J.Get(message, "id") as string;
+      string requestId = J.Get(item, "requestId") as string;
+      string entryId = J.Get(item, "uuid") as string;
+      string key;
+      if (!string.IsNullOrWhiteSpace(messageId)) key = "claude:message:" + messageId;
+      else if (!string.IsNullOrWhiteSpace(requestId)) key = "claude:request:" + requestId;
+      else if (!string.IsNullOrWhiteSpace(entryId)) key = "claude:entry:" + entryId;
+      else return null;
+
+      var record = new Record {
+        key = key,
+        provider = "claude",
+        time = time.Value,
+        model = J.Str(J.Get(message, "model")),
+        input = J.Count(J.Get(usage, "input_tokens")),
+        output = J.Count(J.Get(usage, "output_tokens")),
+        cached = J.Count(J.Get(usage, "cache_read_input_tokens")),
+        write = J.Count(J.Get(usage, "cache_creation_input_tokens")),
+        claudeResponseComplete = !string.IsNullOrWhiteSpace(J.Get(message, "stop_reason") as string)
+      };
+      record.total = record.input + record.output + record.cached + record.write;
+      return record.total > 0 ? record : null;
+    }
+
+    static void MergeUsageRecord(Dictionary<string, Record> records, Record candidate) {
+      if (!records.TryGetValue(candidate.key, out var existing) || PreferUsageRecord(candidate, existing))
+        records[candidate.key] = candidate;
+    }
+
+    static bool PreferUsageRecord(Record candidate, Record existing) {
+      if (candidate.provider != "claude") return candidate.total > existing.total;
+      if (candidate.claudeResponseComplete != existing.claudeResponseComplete)
+        return candidate.claudeResponseComplete;
+      if (candidate.output != existing.output) return candidate.output > existing.output;
+      if (candidate.total != existing.total) return candidate.total > existing.total;
+      return candidate.time < existing.time;
     }
     public static Record CodexRecord(object item,FileCursor c){
       var type=J.Str(J.Get(item,"type"));var payload=J.Get(item,"payload");if(type=="session_meta"){var session=J.Str(J.Get(payload,"id"));if(session.Length>0&&session!=c.session){c.session=session;c.hasPreviousTotal=false;}c.partialHistory=J.Get(payload,"history_base")!=null||J.Str(J.Get(payload,"history_mode"))=="paginated";return null;}if(type=="turn_context"){c.model=J.Str(J.Get(payload,"model"));return null;}if(type!="event_msg"||J.Str(J.Get(payload,"type"))!="token_count")return null;
@@ -137,34 +179,116 @@ namespace TokenGrove {
     void ProcessLine(FileCursor c,string line){
       if(c.provider=="claude"&&(!line.Contains("\"usage\"")||!line.Contains("\"assistant\"")))return;
       if(c.provider=="chatgpt"&&!line.Contains("\"token_count\"")&&!line.Contains("\"turn_context\"")&&!line.Contains("\"session_meta\""))return;
-      try{var item=J.Parse(line);var r=c.provider=="claude"?ClaudeRecord(item):CodexRecord(item,c);if(r==null)return;Record old;if(!c.records.TryGetValue(r.key,out old)||r.total>old.total)c.records[r.key]=r;}catch{/* Active partial writes and malformed lines do not replace good data. */}
+      try {
+        var item = J.Parse(line);
+        var record = c.provider == "claude" ? ClaudeRecord(item) : CodexRecord(item, c);
+        if (record != null) MergeUsageRecord(c.records, record);
+      } catch { /* Malformed lines do not replace good data. */ }
     }
-    void ReadIncrement(string file,string provider){
-      FileCursor c;var size=new FileInfo(file);if(!files.TryGetValue(file,out c)||size.Length<c.position){c=new FileCursor{provider=provider,model="",session=Path.GetFileName(file)};files[file]=c;}
-      if(c.position==size.Length&&c.modified==size.LastWriteTimeUtc)return;
-      // Byte offsets and complete newline boundaries avoid rescans and partial-line loss.
-      using(var fs=new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete)){fs.Seek(c.position,SeekOrigin.Begin);var bytes=new byte[65536];using(var line=new MemoryStream()){int n;while((n=fs.Read(bytes,0,bytes.Length))>0){int start=0;for(int i=0;i<n;i++){if(bytes[i]!=10)continue;line.Write(bytes,start,i-start);if(line.Length<=32*1024*1024)ProcessLine(c,Encoding.UTF8.GetString(line.GetBuffer(),0,(int)line.Length).TrimEnd('\r'));c.position+=line.Length+1;line.SetLength(0);start=i+1;}if(start<n)line.Write(bytes,start,n-start);if(line.Length>32*1024*1024)break;}}}c.modified=size.LastWriteTimeUtc;
+
+    static ulong UsageTailFingerprint(FileStream stream, long end, byte[] buffer) {
+      int remaining = (int)Math.Min(end, 4096);
+      stream.Position = end - remaining;
+      ulong hash = 14695981039346656037UL;
+      while (remaining > 0) {
+        int count = stream.Read(buffer, 0, remaining);
+        if (count == 0) throw new EndOfStreamException();
+        for (int i = 0; i < count; i++) hash = unchecked((hash ^ buffer[i]) * 1099511628211UL);
+        remaining -= count;
+      }
+      return hash;
+    }
+
+    void ReadIncrement(string file, string provider) {
+      const int maxLineBytes = 32 * 1024 * 1024;
+      var info = new FileInfo(file);
+      DateTime lastWrite = info.LastWriteTimeUtc;
+      files.TryGetValue(file, out var cursor);
+      if (cursor != null && cursor.scannedLength == info.Length && cursor.modified == lastWrite) return;
+
+      using (var stream = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete)) {
+        long length = stream.Length;
+        var bytes = new byte[65536];
+        // A changed file of the same or smaller length is a rewrite. Before following an
+        // apparent append, also check the bytes at the last indexed newline.
+        if (cursor == null || length <= cursor.scannedLength ||
+            (cursor.position > 0 && UsageTailFingerprint(stream, cursor.position, bytes) != cursor.tailFingerprint)) {
+          cursor = new FileCursor { provider = provider, model = "", session = Path.GetFileName(file) };
+        }
+
+        stream.Position = cursor.position;
+        using (var line = new MemoryStream()) {
+          long lineBytes = 0;
+          while (stream.Position < length) {
+            int count = stream.Read(bytes, 0, (int)Math.Min(bytes.Length, length - stream.Position));
+            if (count == 0) break;
+            int segmentStart = 0;
+            for (int i = 0; i < count; i++) {
+              if (bytes[i] != (byte)'\n') continue;
+              int segmentLength = i - segmentStart;
+              lineBytes += segmentLength;
+              if (lineBytes <= maxLineBytes) {
+                line.Write(bytes, segmentStart, segmentLength);
+                ProcessLine(cursor, Encoding.UTF8.GetString(line.GetBuffer(), 0, (int)line.Length).TrimEnd('\r'));
+              }
+              cursor.position += lineBytes + 1;
+              lineBytes = 0;
+              line.SetLength(0);
+              segmentStart = i + 1;
+            }
+            int trailing = count - segmentStart;
+            lineBytes += trailing;
+            if (lineBytes <= maxLineBytes && trailing > 0) line.Write(bytes, segmentStart, trailing);
+          }
+        }
+
+        cursor.tailFingerprint = UsageTailFingerprint(stream, cursor.position, bytes);
+        cursor.scannedLength = length;
+        cursor.modified = lastWrite;
+        files[file] = cursor;
+      }
     }
     internal List<Record> ReadUsageFile(string file,string provider){ReadIncrement(file,provider);return files[file].records.Values.ToList();}
     Record[] ReadUsage(out int count){
       var roots=new List<Tuple<string,string>>{Tuple.Create(Path.Combine(ClaudeRoot,"projects"),"claude"),Tuple.Create(Path.Combine(CodexRoot,"sessions"),"chatgpt"),Tuple.Create(Path.Combine(CodexRoot,"archived_sessions"),"chatgpt")};
       foreach(var dir in DesktopRoots())roots.Add(Tuple.Create(Path.Combine(dir,"claude-code-sessions"),"claude"));
       var candidates=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);foreach(var root in roots){foreach(var f in Walk(root.Item1))candidates[f]=root.Item2;}
+      count = candidates.Count;
+      return ReadUsageFiles(candidates);
+    }
+    internal Record[] ReadUsageFiles(IReadOnlyDictionary<string, string> candidates) {
       foreach(var old in files.Keys.Except(candidates.Keys,StringComparer.OrdinalIgnoreCase).ToList())files.Remove(old);
       UnreadableUsageFiles=0;foreach(var f in candidates){try{ReadIncrement(f.Key,f.Value);}catch{UnreadableUsageFiles++;}}
-      var all=new Dictionary<string,Record>();foreach(var c in files.Values){foreach(var r in c.records.Values){Record old;if(!all.TryGetValue(r.key,out old)||r.total>old.total)all[r.key]=r;}}
-      count=candidates.Count;var result=all.Values.ToArray();Array.Sort(result,(a,b)=>a.time.CompareTo(b.time));Volatile.Write(ref usageRecords,result);Volatile.Write(ref usageReady,true);return result;
+      var all = new Dictionary<string, Record>();
+      foreach (var cursor in files.Values) {
+        foreach (var record in cursor.records.Values) MergeUsageRecord(all, record);
+      }
+      var result=all.Values.ToArray();Array.Sort(result,(a,b)=>a.time.CompareTo(b.time));Volatile.Write(ref usageRecords,result);Volatile.Write(ref usageReady,true);return result;
     }
     public static Estimate Calculate(Account account,List<Record> records){
       return CalculateWindow(account.provider,account.Five,records,DateTime.UtcNow);
     }
-    public static Estimate CalculateWindow(string provider,WindowQuota window,IEnumerable<Record> records,DateTime now){
-      if(window==null||!window.usedPercent.HasValue||window.usedPercent<=1||window.usedPercent>=100||!window.windowMinutes.HasValue||window.windowMinutes<=0||window.windowMinutes>525600)return null;
-      var end=J.Time(window.resetsAt);var observed=J.Time(window.observedAt);if(!end.HasValue||end<=now||!observed.HasValue||now-observed.Value>TimeSpan.FromMinutes(30)||observed.Value>now.AddMinutes(2))return null;
-      var start=end.Value.AddMinutes(-window.windowMinutes.Value);if(observed.Value<start||observed.Value>=end)return null;
-      long tokens=0;foreach(var row in records)if(row.provider==provider&&row.time>=start&&row.time<=observed.Value)tokens=checked(tokens+row.total);if(tokens<1000)return null;
-      double remaining=tokens/window.usedPercent.Value*(100-window.usedPercent.Value);if(remaining>9007199254740991d)return null;
-      return new Estimate{remainingTokens=(long)remaining,sampleTokens=tokens,sampleUsedPercent=window.usedPercent.Value,windowId=window.id,startUtc=J.Iso(start),endUtc=J.Iso(end.Value),measuredAt=J.Iso(observed.Value),note="按当前额度窗口的本机 Token 与官方已用比例估算；不含网页或其他设备，不是官方余额。"};
+    public static Estimate CalculateWindow(string provider, WindowQuota window, IEnumerable<Record> records, DateTime now) {
+      if (window == null || !window.usedPercent.HasValue || window.usedPercent <= 1 || window.usedPercent >= 100) return null;
+      var end = J.Time(window.resetsAt);
+      var observed = J.Time(window.observedAt);
+      if (!end.HasValue || end <= now || !observed.HasValue ||
+          now - observed.Value > TimeSpan.FromMinutes(30) || observed.Value > now.AddMinutes(2)) return null;
+
+      var sample = UsageEngine.ForWindow(provider, window, records, observed.Value);
+      if (!sample.usedTokens.HasValue || sample.usedTokens < 1000) return null;
+      double remaining = sample.usedTokens.Value / window.usedPercent.Value * (100 - window.usedPercent.Value);
+      if (remaining > 9007199254740991d) return null;
+      return new Estimate {
+        remainingTokens = (long)remaining,
+        sampleTokens = sample.usedTokens.Value,
+        sampleUsedPercent = window.usedPercent.Value,
+        windowId = window.id,
+        startUtc = sample.startUtc,
+        endUtc = sample.endUtc,
+        measuredAt = sample.measuredThroughUtc,
+        note = "按本机日志和采样时的官方额度比例推算。模型、用法和其他设备的活动都会影响实际余量。"
+      };
     }
     public async Task RefreshUsageAsync(){if(!await gate.WaitAsync(0).ConfigureAwait(false))return;Busy=true;try{await Task.Run(()=>{int count;ReadUsage(out count);}).ConfigureAwait(false);}finally{Busy=false;gate.Release();}}
     public async Task<Snapshot> CollectAsync(bool force=false){
@@ -173,7 +297,7 @@ namespace TokenGrove {
         var claudeTask=ReadClaudeAsync();bool refresh=force||cachedCodex==null||DateTime.UtcNow-codexAt>=TimeSpan.FromMinutes(5)||cachedCodex.windows.Any(w=>w.Expired);
         var codexTask=refresh?ReadCodexAsync():Task.FromResult(cachedCodex);int fileCount=0;var usageTask=Task.Run(()=>{int n;var r=ReadUsage(out n);fileCount=n;return r;});
         await Task.WhenAll(claudeTask,codexTask,usageTask).ConfigureAwait(false);if(refresh){cachedCodex=codexTask.Result;codexAt=DateTime.UtcNow;}
-        var allRecords=usageTask.Result;var records=allRecords.Where(r=>r.time>=DateTime.UtcNow.AddDays(-30)).ToList();var snapshot=new Snapshot{updatedAt=J.Iso(DateTime.UtcNow),accounts=new List<Account>{claudeTask.Result,codexTask.Result},coverage="最近 30 天展示 · 已索引 "+fileCount+" 份本机记录（不含网页会话）"};
+        var allRecords=usageTask.Result;var records=allRecords.Where(r=>r.time>=DateTime.UtcNow.AddDays(-30)).ToList();var snapshot=new Snapshot{usageRevision=Snapshot.CurrentUsageRevision,updatedAt=J.Iso(DateTime.UtcNow),accounts=new List<Account>{claudeTask.Result,codexTask.Result},coverage="最近 30 天展示 · 已索引 "+fileCount+" 份本机记录（不含网页会话）"};
         snapshot.models=records.GroupBy(r=>r.provider+":"+r.model).Select(g=>new ModelUsage{id=g.Key,name=g.First().model,provider=g.First().provider,inputTokens=g.Sum(r=>r.input),outputTokens=g.Sum(r=>r.output),cachedTokens=g.Sum(r=>r.cached),cacheWriteTokens=g.Sum(r=>r.write),totalTokens=g.Sum(r=>r.total)}).OrderByDescending(m=>m.totalTokens).ToList();
         snapshot.daily=records.GroupBy(r=>r.time.ToLocalTime().ToString("yyyy-MM-dd")).Select(g=>new DayUsage{date=g.Key,claude=g.Where(r=>r.provider=="claude").Sum(r=>r.total),chatgpt=g.Where(r=>r.provider=="chatgpt").Sum(r=>r.total)}).OrderBy(d=>d.date).ToList();
         var measured=DateTime.UtcNow;foreach(var a in snapshot.accounts){foreach(var w in a.windows){w.localUsage=UsageEngine.ForWindow(a.provider,w,allRecords,measured);w.estimate=CalculateWindow(a.provider,w,allRecords,measured);}a.estimate=a.Five?.estimate;a.weekEstimate=a.Week?.estimate;}watch.Stop();LastTiming=watch.Elapsed.TotalSeconds.ToString("0.00")+"s · "+fileCount+" 份记录";return snapshot;

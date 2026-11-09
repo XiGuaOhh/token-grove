@@ -35,7 +35,7 @@ namespace TokenGrove {
         UpdateData();EnterView();
       }finally{ResumeLayout(false);}Invalidate(true);
     }
-    public void UpdateData(Snapshot old=null){if(old!=null){previous.Clear();foreach(var a in old.accounts)foreach(var w in a.windows)previous[a.provider+":"+w.id]=w.usedPercent;AnimateData();}if(view=="usage")usage?.UpdateSnapshot();AccessibleDescription=string.Join("；",C.Data.accounts.Select(a=>a.label+" "+a.Status));Invalidate();}
+    public void UpdateData(Snapshot old=null){if(old!=null){previous.Clear();foreach(var a in old.accounts)foreach(var w in a.windows)previous[a.provider+":"+w.id]=w.DisplayPercent;AnimateData();}if(view=="usage")usage?.UpdateSnapshot();AccessibleDescription=string.Join("；",C.Data.accounts.Select(a=>a.label+" "+a.Status));Invalidate();}
     protected override void OnSoftClose(){C.ShowWidget();}
     protected override void LayoutSurface(){if(layoutBusy||widget==null)return;layoutBusy=true;try{Place(widget,W-164,20,36,33);Place(refresh,W-118,20,96,33);Place(help,15,H-57,38,34);if(settings!=null)Place(settings,CX,76,CW,H-115);if(usage!=null)Place(usage,CX,76,CW,H-115);if(plans!=null)Place(plans,CX,76,CW,H-115);}finally{layoutBusy=false;}}
     public void ApplyColors(){var p=C.Colors;BackColor=GlassActive?Color.Black:p.Bg;foreach(Control b in Controls)b.Invalidate();if(refresh!=null){refresh.Enabled=!C.Refreshing;refresh.Text=C.Refreshing?"更新中":"刷新";}
@@ -63,18 +63,44 @@ namespace TokenGrove {
       if(view=="overview")Overview(g,p);else if(view=="accounts")Accounts(g,p);
       string status=C.Refreshing?"更新中":C.Imported?"离线快照":J.Time(C.Data.updatedAt)?.ToLocalTime().ToString("HH:mm")??"—";Art.Dot(g,CX,H-20,C.Refreshing?p.Warning:p.Green,4);Art.Text(g,status,CX+12,H-26,9.5f,p.Muted);Art.Text(g,C.MemoryMB.ToString("0")+" MB",W-109,H-26,9.5f,p.Subtle,false,87,StringAlignment.Far);}
     void Overview(Graphics g,Palette p){Card(g,p,new RectangleF(CX,78,CardWidth,366),C.Data.accounts.FirstOrDefault(a=>a.provider=="claude"));Card(g,p,new RectangleF(CX+CardWidth+16,78,CardWidth,366),C.Data.accounts.FirstOrDefault(a=>a.provider=="chatgpt"));
-      var r=new RectangleF(CX,460,CW,Math.Max(100,H-503));Art.Surface(g,r,p);Art.Text(g,"近 7 日",r.X+19,r.Y+13,11,p.Muted);Art.Text(g,J.Tokens(C.Data.WeekTokens)+" Token",r.Right-190,r.Y+11,14,p.Text,true,170,StringAlignment.Far);Chart(g,p,new RectangleF(r.X+23,r.Y+49,r.Width-46,Math.Max(24,r.Height-79)));}
+      var r=new RectangleF(CX,460,CW,Math.Max(100,H-503));Art.Surface(g,r,p);Art.Text(g,"近 7 日本机用量",r.X+19,r.Y+13,11,p.Muted);
+      string weeklyTotal = C.Imported || C.Data.usageRevision == Snapshot.CurrentUsageRevision ? J.Tokens(C.Data.WeekTokens) + " Token" : "—";
+      Art.Text(g,weeklyTotal,r.Right-190,r.Y+11,14,p.Text,true,170,StringAlignment.Far);Chart(g,p,new RectangleF(r.X+23,r.Y+49,r.Width-46,Math.Max(24,r.Height-79)));}
     void Card(Graphics g,Palette p,RectangleF r,Account a){if(a==null)return;Art.Surface(g,r,p);ProviderIcons.Draw(g,a.provider=="claude",new RectangleF(r.X+21,r.Y+22,25,25),p.Muted);Art.Text(g,a.provider=="claude"?"Claude":"ChatGPT / Codex",r.X+58,r.Y+19,18,p.Text,true,r.Width-142);Art.Text(g,a.plan??"",r.Right-94,r.Y+23,10.5f,p.Subtle,false,73,StringAlignment.Far);Art.Text(g,C.Prefs.privacy?J.Mask(a.email):a.email??"本机账号",r.X+22,r.Y+53,10.5f,p.Muted,false,r.Width-44);
       Quota(g,p,a,a.Five??new WindowQuota{id="five_hour",label="5 小时"},r.X+22,r.Y+99,r.Width-44);Art.Line(g,r.X+22,r.Y+215,r.Right-22,r.Y+215,p.Line);Quota(g,p,a,a.Week??new WindowQuota{id="seven_day",label="每周"},r.X+22,r.Y+237,r.Width-44);}
     static Estimate EstimateFor(Account a,WindowQuota w){if(w==null)return null;var estimate=w.estimate??(w.id=="seven_day"?a.weekEstimate:a.estimate);return estimate!=null&&estimate.Current(w,DateTime.UtcNow)?estimate:null;}
-    void Quota(Graphics g,Palette p,Account a,WindowQuota w,float x,float y,float width){string label=(w.label??(w.id=="seven_day"?"每周":"5 小时")).Replace("额度","");Art.Text(g,label,x,y,12,p.Muted);Art.Text(g,w.usedPercent.HasValue?w.usedPercent.Value.ToString("0.#")+"%":"—",x+width-85,y-6,22,p.Text,true,85,StringAlignment.Far);
-      double? value=w.usedPercent,before;if(value.HasValue&&previous.TryGetValue(a.provider+":"+w.id,out before)&&before.HasValue)value=before.Value+(value.Value-before.Value)*DataBlend;Art.Progress(g,new RectangleF(x,y+30,width,6),value,p.Green,p);
-      Art.Text(g,"已用 "+w.TokenText,x,y+48,11,p.Text,false,width*.43f);var estimate=EstimateFor(a,w);Art.Text(g,"预估剩余 "+(estimate==null?"—":J.Tokens(estimate.remainingTokens)),x+width*.40f,y+48,11,p.Text,false,width*.60f,StringAlignment.Far);Art.Text(g,Reset(w),x,y+77,10,p.Subtle,false,width);}
+    void Quota(Graphics g, Palette p, Account a, WindowQuota w, float x, float y, float width) {
+      string label = w.label ?? (w.id == "seven_day" ? "每周额度" : "5 小时额度");
+      double? percent = w.DisplayPercent;
+      Art.Text(g, label, x, y, 12, p.Muted);
+      Art.Text(g, percent.HasValue ? percent.Value.ToString("0.#") + "%" : "—", x + width - 85, y - 6, 22, p.Text, true, 85, StringAlignment.Far);
+      if (percent.HasValue && previous.TryGetValue(a.provider + ":" + w.id, out var before) && before.HasValue)
+        percent = before.Value + (percent.Value - before.Value) * DataBlend;
+      Art.Progress(g, new RectangleF(x, y + 30, width, 6), percent, p.Green, p);
+      Art.Text(g, "本机已用 " + w.TokenText, x, y + 48, 11, p.Text, false, width * .43f);
+      var estimate = EstimateFor(a, w);
+      Art.Text(g, "余量推算 " + (estimate == null ? "—" : J.Tokens(estimate.remainingTokens)), x + width * .40f, y + 48, 11, p.Text, false, width * .60f, StringAlignment.Far);
+      Art.Text(g, Reset(w), x, y + 77, 10, p.Subtle, false, width);
+    }
     static string Reset(WindowQuota w){var end=J.Time(w.resetsAt);if(!end.HasValue)return "重置时间未知";var diff=end.Value-DateTime.UtcNow;if(diff.TotalSeconds<=0)return "等待更新";return diff.TotalDays>=1?((int)diff.TotalDays+" 天 "+diff.Hours+" 小时后重置"):((int)diff.TotalHours+" 小时 "+diff.Minutes.ToString("00")+" 分后重置");}
     void Chart(Graphics g,Palette p,RectangleF r){var days=Enumerable.Range(0,7).Select(i=>DateTime.Today.AddDays(i-6).ToString("yyyy-MM-dd")).ToArray();var rows=days.Select(d=>C.Data.daily.FirstOrDefault(x=>x.date==d)??new DayUsage{date=d}).ToArray();long max=Math.Max(1,rows.Max(d=>d.claude+d.chatgpt));Art.Line(g,r.Left,r.Bottom,r.Right,r.Bottom,p.Line);float cell=r.Width/7;
       for(int i=0;i<7;i++){var row=rows[i];float height=(row.claude+row.chatgpt)/(float)max*r.Height;float lower=row.claude/(float)Math.Max(1,row.claude+row.chatgpt)*height;float x=r.X+i*cell+cell*.32f,width=cell*.36f;if(lower>0)Art.Box(g,new RectangleF(x,r.Bottom-lower,width,lower),p.Subtle,null,3);if(height-lower>0)Art.Box(g,new RectangleF(x,r.Bottom-height,width,Math.Max(1,height-lower)),p.Mint,null,3);Art.Text(g,i==6?"今天":DateTime.Parse(row.date).ToString("MM/dd"),r.X+i*cell,r.Bottom+7,9,p.Subtle,false,cell,StringAlignment.Center);}}
     void Accounts(Graphics g,Palette p){float x=CX;foreach(var a in C.Data.accounts.Take(2)){var r=new RectangleF(x,78,CardWidth,249);Art.Surface(g,r,p);ProviderIcons.Draw(g,a.provider=="claude",new RectangleF(x+22,101,25,25),p.Muted);Art.Text(g,a.label,x+59,99,18,p.Text,true);Art.Text(g,a.Status,x+22,145,12,p.Green);Art.Text(g,C.Prefs.privacy?J.Mask(a.email):a.email??"本机账号",x+22,180,12,p.Text,false,CardWidth-44);Art.Text(g,a.source,x+22,218,10.5f,p.Muted,false,CardWidth-44);Art.Text(g,J.Time(a.lastSyncedAt)?.ToLocalTime().ToString("MM/dd HH:mm")??"—",x+22,281,10,p.Subtle);Art.Text(g,"详情  ›",r.Right-95,280,11,p.Green,false,73,StringAlignment.Far);x+=CardWidth+16;}}
-    void ShowDetailsTip(object sender,MouseEventArgs e){string text=null;if(view=="overview"&&e.Y/Scale>=78&&e.Y/Scale<=444){var a=C.Data.accounts.FirstOrDefault(x=>x.provider==(e.X/Scale<CX+CardWidth?"claude":"chatgpt"));if(a!=null){bool week=e.Y/Scale>303;var w=week?a.Week:a.Five;var estimate=w==null?null:EstimateFor(a,w);text=w==null?"尚无额度数据":(w.label??"")+"\n本机已用："+(w.localUsage?.usedTokens?.ToString("N0")??"窗口未知")+" Token\n预估剩余："+(estimate==null?"缺少有效窗口或采样":estimate.remainingTokens.ToString("N0")+" Token")+"\n估算仅基于当前窗口的本机日志与官方已用比例。";}}if(text!=lastTip){lastTip=text;tips.SetToolTip(this,text);}}
+    void ShowDetailsTip(object sender, MouseEventArgs e) {
+      string text = null;
+      float x = e.X / Scale, y = e.Y / Scale;
+      if (view == "overview" && x >= CX && x <= W - 22 && y >= 78 && y <= 444) {
+        var account = C.Data.accounts.FirstOrDefault(a => a.provider == (x < CX + CardWidth ? "claude" : "chatgpt"));
+        var window = y > 303 ? account?.Week : account?.Five;
+        if (window != null) {
+          text = (window.label ?? "额度") + " · 官方用量 " + (window.DisplayPercent?.ToString("0.#") ?? "—") +
+            (window.DisplayPercent.HasValue ? "%\n" : "\n") + window.DescribeLocalUsage();
+          var estimate = EstimateFor(account, window);
+          if (estimate != null) text += "\n余量推算 " + estimate.remainingTokens.ToString("N0") + " Token\n" + estimate.note;
+        }
+      }
+      if (text != lastTip) { lastTip = text; tips.SetToolTip(this, text); }
+    }
     protected override void OnMouseDown(MouseEventArgs e){base.OnMouseDown(e);if(e.Button!=MouseButtons.Left)return;float x=e.X/Scale,y=e.Y/Scale;if(view=="accounts"&&y>=78&&y<=327||view=="overview"&&y>=78&&y<164){if(x>=CX&&x<=CX+CardWidth)C.Detail(C.Data.accounts.FirstOrDefault(a=>a.provider=="claude"));if(x>=CX+CardWidth+16&&x<=W-22)C.Detail(C.Data.accounts.FirstOrDefault(a=>a.provider=="chatgpt"));}if(view=="overview"&&x>=CX&&y>=460&&y<H-40)SetView("usage");}
     protected override void Dispose(bool disposing){if(disposing)tips.Dispose();base.Dispose(disposing);}
   }
