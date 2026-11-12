@@ -6,7 +6,7 @@ on:
       tag:
         description: Release version (must match the app and release notes)
         required: true
-        default: v2.7.2
+        default: v2.8.0
         type: string
 
 permissions:

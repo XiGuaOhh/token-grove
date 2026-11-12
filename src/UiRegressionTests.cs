@@ -49,6 +49,34 @@ namespace TokenGrove {
           var planTitle=plans.Controls.OfType<GroveEdit>().Single(x=>x.AccessibleName=="计划标题");var planBody=plans.Controls.OfType<GroveEdit>().Single(x=>x.AccessibleName=="计划内容");
           planTitle.Text="先写好计划";planBody.Text="等额度重置后继续。\r\n保留具体要求。";plans.Controls.OfType<GroveCombo>().Single(x=>x.AccessibleName=="计划提醒方式").SelectedIndex=2;
           check(plans.Flush()&&WorkPlanStore.Open(c.Plans.FilePath).Items[0].body.Contains("具体要求"),"Plan editor changes are saved as a local durable document");
+          using (var png = new MemoryStream())
+          using (var bitmap = new Bitmap(160, 90)) {
+            bitmap.Save(png, ImageFormat.Png);
+            var clipboardImage = new DataObject();
+            clipboardImage.SetData("PNG", false, png);
+            // The self-test pumps messages without Application.Run. Give the async import
+            // the same UI-thread context it has when the application is running normally.
+            bool accepted;
+            var previousContext = System.Threading.SynchronizationContext.Current;
+            using (var uiContext = new WindowsFormsSynchronizationContext()) {
+              try {
+                System.Threading.SynchronizationContext.SetSynchronizationContext(uiContext);
+                accepted = plans.PasteImageData(clipboardImage);
+                var deadline = DateTime.UtcNow.AddSeconds(5);
+                while (c.Plans.Items[0].images.Count == 0 && DateTime.UtcNow < deadline) {
+                  Application.DoEvents();
+                  System.Threading.Thread.Sleep(10);
+                }
+              } finally {
+                System.Threading.SynchronizationContext.SetSynchronizationContext(previousContext);
+              }
+            }
+            var strip = plans.Controls.OfType<PlanImageStrip>().Single();
+            check(accepted && strip.Visible && strip.Controls.OfType<PlanImageTile>().Count() == 1 &&
+                WorkPlanStore.Open(c.Plans.FilePath).Items[0].images.Count == 1 &&
+                planBody.Text.Contains("具体要求") && !plans.PasteImageData(new DataObject(DataFormats.UnicodeText, "文字")),
+              "Pasting a PNG into a plan persists the picture and leaves plain text editing intact");
+          }
           c.ShowWidget();DoubleClick(c.Floating);check(View(c.Main)=="plans"&&planBody.Text.Contains("具体要求"),"The widget restores the plans page without losing its editor contents");
           c.Main.SetView("settings");var settings=c.Main.Controls.OfType<GroveScrollPanel>().Single();
           var updates=settings.ContentControls.OfType<UpdateView>().Single();

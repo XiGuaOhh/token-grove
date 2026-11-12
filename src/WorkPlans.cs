@@ -9,6 +9,7 @@ namespace TokenGrove {
   public sealed class WorkPlan {
     public string id,title,body,provider,reminder="quota",createdUtc,updatedUtc,armedUtc,dueUtc,readyUtc,readyReason,notifiedUtc,completedUtc;
     public string[] waitingWindows=new string[0];
+    public List<PlanImage> images=new List<PlanImage>();
     [ScriptIgnore]public bool Completed{get{return completedUtc!=null;}}
     [ScriptIgnore]public bool Ready{get{return !Completed&&readyUtc!=null;}}
     [ScriptIgnore]public string Client{get{return provider=="claude"?"Claude":"Codex";}}
@@ -18,18 +19,27 @@ namespace TokenGrove {
   public sealed class WorkPlanStore {
     public readonly string FilePath;public readonly List<WorkPlan> Items=new List<WorkPlan>();
     internal readonly List<string> ImportedSources=new List<string>();
+    internal readonly PlanImages Images;
+    Dictionary<string, PlanImage> savedImages = ImageReferences(new WorkPlan[0]);
+    Dictionary<string, PlanImage> backupImages = ImageReferences(new WorkPlan[0]);
     public string MigrationWarning{get;internal set;}
     public string LoadError{get;private set;}
     public bool CanWrite{get{return LoadError==null;}}
     public int ReadyCount{get{return Items.Count(p=>p.Ready);}}
-    public WorkPlanStore(string path){FilePath=Path.GetFullPath(path);}
+    public WorkPlanStore(string path) {
+      FilePath = Path.GetFullPath(path);
+      Images = new PlanImages(FilePath);
+    }
     public static WorkPlanStore Open(string path){
       var store=new WorkPlanStore(path);if(!File.Exists(path))return store;
       try{
         if(new FileInfo(path).Length>64*1024*1024)throw new InvalidDataException();
         var document=J.Serializer().Deserialize<PlanDocument>(J.Read(path));
-        if(document==null||document.version!=1)throw new InvalidDataException();Validate(document.plans);store.Items.AddRange(document.plans);
+        if(document==null||(document.version!=1&&document.version!=2))throw new InvalidDataException();
+        Validate(document.plans);store.Items.AddRange(document.plans);
         if(document.importedSources!=null){if(document.importedSources.Count>256||document.importedSources.Any(s=>string.IsNullOrEmpty(s)||s.Length>32768))throw new InvalidDataException();store.ImportedSources.AddRange(document.importedSources);}
+        store.savedImages = ImageReferences(store.Items);
+        if (Directory.Exists(store.Images.DirectoryPath)) store.ReadBackupImages();
       }catch{store.LoadError="计划文件读取失败，原文件已保留。请检查数据目录中的 plans.json 或备份。";}
       return store;
     }
@@ -40,16 +50,68 @@ namespace TokenGrove {
         foreach(string date in new[]{p.armedUtc,p.dueUtc,p.readyUtc,p.notifiedUtc,p.completedUtc})if(date!=null&&!J.Time(date).HasValue)throw new InvalidDataException("计划时间无效");
         if(p.reminder=="time"&&p.dueUtc==null)throw new InvalidDataException("请填写提醒时间");
         if(p.waitingWindows==null)p.waitingWindows=new string[0];if(p.waitingWindows.Length>20||p.waitingWindows.Any(w=>string.IsNullOrEmpty(w)||w.Length>80))throw new InvalidDataException("额度窗口无效");
+        if (p.images == null) p.images = new List<PlanImage>();
+        if (p.images.Count > PlanImages.MaxCount || p.images.Any(image => !PlanImages.IsValid(image)) ||
+            p.images.Select(image => image.id).Distinct(StringComparer.OrdinalIgnoreCase).Count() != p.images.Count)
+          throw new InvalidDataException("计划图片记录无效。");
       }
+    }
+    static Dictionary<string, PlanImage> ImageReferences(IEnumerable<WorkPlan> plans) {
+      var result = new Dictionary<string, PlanImage>(StringComparer.OrdinalIgnoreCase);
+      foreach (var plan in plans) {
+        if (plan?.images == null) continue;
+        foreach (var image in plan.images) {
+          if (PlanImages.IsValid(image)) result[image.id + image.extension] = image;
+        }
+      }
+      return result;
+    }
+    void ReadBackupImages() {
+      string path = FilePath + ".bak";
+      if (!File.Exists(path)) return;
+      try {
+        if (new FileInfo(path).Length > 64 * 1024 * 1024) return;
+        var backup = J.Serializer().Deserialize<PlanDocument>(J.Read(path));
+        if (backup?.plans != null) backupImages = ImageReferences(backup.plans);
+      } catch { /* An unreadable backup is left intact. */ }
     }
     public void Save(){
       if(!CanWrite)throw new IOException(LoadError);Validate(Items);
+      var currentImages = ImageReferences(Items);
       var directory=Path.GetDirectoryName(FilePath);Directory.CreateDirectory(directory);
       string temp=Path.Combine(directory,Path.GetFileName(FilePath)+"."+Guid.NewGuid().ToString("N")+".tmp");
+      bool replaced = false;
       try{
-        File.WriteAllText(temp,J.Serializer().Serialize(new PlanDocument{plans=Items,importedSources=ImportedSources}),new UTF8Encoding(false));
-        if(File.Exists(FilePath))File.Replace(temp,FilePath,FilePath+".bak",true);else File.Move(temp,FilePath);
+        var document = new PlanDocument {
+          version = currentImages.Count > 0 ? 2 : 1,
+          plans = Items, importedSources = ImportedSources
+        };
+        File.WriteAllText(temp,J.Serializer().Serialize(document),new UTF8Encoding(false));
+        if(File.Exists(FilePath)){File.Replace(temp,FilePath,FilePath+".bak",true);replaced=true;}else File.Move(temp,FilePath);
       }finally{if(File.Exists(temp))File.Delete(temp);}
+      if (replaced) {
+        // An image remains available while either the active plans or their backup refers to it.
+        var expiredBackup = backupImages;
+        backupImages = savedImages;
+        foreach (var pair in expiredBackup) {
+          if (!currentImages.ContainsKey(pair.Key) && !backupImages.ContainsKey(pair.Key))
+            Images.RemoveFiles(pair.Value);
+        }
+      }
+      savedImages = currentImages;
+    }
+    internal void SetImages(WorkPlan plan, IEnumerable<PlanImage> images) {
+      if (!Items.Contains(plan)) throw new InvalidOperationException("该计划已移除。");
+      var previous = plan.images;
+      string updated = plan.updatedUtc;
+      plan.images = images.ToList();
+      plan.updatedUtc = J.Iso(DateTime.UtcNow);
+      try { Save(); }
+      catch {
+        plan.images = previous;
+        plan.updatedUtc = updated;
+        throw;
+      }
     }
     public WorkPlan Create(string provider,Snapshot data,DateTime now){
       if(!CanWrite)throw new IOException(LoadError);if(Items.Count>=500)throw new InvalidOperationException("请先清理一些已完成的计划。");

@@ -20,7 +20,7 @@ namespace TokenGrove {
     }
     public static WorkPlanStore OpenDefault(){return Open(SharedRoot,LegacyFiles());}
     static DateTime Modified(WorkPlan p){return new[]{J.Time(p.updatedUtc),J.Time(p.completedUtc)}.Where(t=>t.HasValue).Select(t=>t.Value).DefaultIfEmpty(DateTime.MinValue).Max();}
-    static bool SameContent(WorkPlan a,WorkPlan b){return a.title==b.title&&(a.body??"")==(b.body??"")&&a.provider==b.provider&&a.reminder==b.reminder&&(a.reminder!="time"||a.dueUtc==b.dueUtc);}
+    static bool SameContent(WorkPlan a,WorkPlan b){return a.title==b.title&&(a.body??"")==(b.body??"")&&a.provider==b.provider&&a.reminder==b.reminder&&(a.reminder!="time"||a.dueUtc==b.dueUtc)&&a.images.Select(image=>image.id).SequenceEqual(b.images.Select(image=>image.id));}
     public static WorkPlanStore Open(string sharedRoot,IEnumerable<string> legacyFiles){
       var store=WorkPlanStore.Open(Path.Combine(sharedRoot,"plans.json"));if(!store.CanWrite)return store;
       bool changed=false;
